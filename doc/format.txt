@@ -1,0 +1,11 @@
+lz4 format
+
+sequence = token(1) + literalslen(i) + literals(token >> 4 + i) + [match copy: offset(2) + length(token >> 4 << 4)]
+
+match copy:
+	position = current postition - offset (0 is invalid)
+	length = 4 + length
+
+last 5 bytes = literals
+last match starts 12 bytes before end of stream
+last sequence is incomplete and stops after the literals
