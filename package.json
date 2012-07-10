@@ -1,20 +1,20 @@
 {
   "author": "Pierre Curto"
-, "name": "lz4-js"
+, "name": "lz4"
 , "description": "LZ4 streaming compression and decompression"
 , "keywords": ["lz4","compression","decompression","stream"]
 , "version": "0.0.1"
-, "homepage": "http://github.com/pierrec/node-lz4-js"
+, "homepage": "http://github.com/pierrec/node-lz4"
 , "repository": {
     "type": "git"
-  , "url": "git://github.com/pierrec/node-lz4-js.git"
+  , "url": "git://github.com/pierrec/node-lz4.git"
   }
 , "main": "./lib/lz4.js"
-, "bugs": { "url" : "http://github.com/pierrec/node-lz4-js/issues" }
+, "bugs": { "url" : "http://github.com/pierrec/node-lz4/issues" }
 , "licenses":
   [ {
       "type": "MIT"
-    , "url": "http://github.com/pierrec/node-lz4-js/raw/master/LICENSE"
+    , "url": "http://github.com/pierrec/node-lz4/raw/master/LICENSE"
     }
   ]
 , "engines": {
