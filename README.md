@@ -1,6 +1,6 @@
 # LZ4
 
-[LZ4](http://fastcompression.blogspot.fr/) is a very fast compression and decompression algorithm. This nodejs module provides a Javascript implementation of it, currently limited on decompression. Direct bindings may be provided in the future.
+[LZ4](http://fastcompression.blogspot.fr/) is a very fast compression and decompression algorithm. This nodejs module provides a Javascript implementation of it, currently limited on decompression. Direct bindings will be provided in the future.
 
 This is very much a __work in progress__.
 
@@ -22,7 +22,7 @@ There are 2 ways to decode:
 Either way, there are 2 options that the decoder takes:
 
 * `chunkSize` (_Number_): number of bytes that was used to compress the data (default=8Mb)
-* `incrementSize` (_Number_): number of bytes by which to increment the output buffer if it becomes full and there is still data to decode. Setting it to the right value has a significant impact on performance. If the output size is known, use it as the incrementSize value for maximum performance.
+* `outputSize` (_Number_): number of bytes for the output buffer (default=`chunkSize`)
 
 
 #### Asynchronous decoding
@@ -67,8 +67,6 @@ fs.writeFileSync('test', output)
 * [LZ4 stream format](http://fastcompression.blogspot.fr/2011/05/lz4-explained.html)
 
 ## Restrictions
-
-Currently, the decoder handles pure LZ4 streams, without additional data. For instance, to compress data you can use `bin/lz4demo32`, which adds a header to the created file. In order to properly decode it with lz4-js, you need to strip it out. You can use `bin/lz4strip` for that task.
 
 LZ4 streams have only been tested using `bin/lz4demo32`, not `bin/lz4demo64`.
 
