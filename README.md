@@ -14,17 +14,18 @@
 
 There are 2 ways to encode:
 
-* __asynchronous__ using nodejs Streams - slowest but can handle very large data sets (no memory limitations). NB. encoding via streams is __extremely__ slow at the moment.
+* __asynchronous__ using nodejs Streams - slowest but can handle very large data sets (no memory limitations).
 * __synchronous__ by feeding the whole set of data - faster but is limited by the amount of memory
-
-Either way, the encoder takes the following options:
-
-* `chunkSize` (_Number_): number of bytes used to chunk the data (default=8Mb)
 
 
 #### Asynchronous encoding
 
-First, create an LZ4 encoding stream with `LZ4#createEncoderStream()`.
+First, create an LZ4 encoding stream with `LZ4#createEncoderStream(options)`.
+
+* `options.chunkSize` (_Number_): chunk size to use (default=8Mb) (optional)
+* `options.hc` (_Boolean_): use high compression (default=false) (optional)
+
+
 The stream can then encode any data piped to it. It will emit a `data` event on each encoded chunk, which can be saved into an output stream.
 
 The following example shows how to encode a file `test` into `test.lz4`.
@@ -45,7 +46,12 @@ input.pipe(encoder).pipe(output)
 
 #### Synchronous encoding
 
-Read the data into memory and feed it to `LZ4#encode()`.
+Read the data into memory and feed it to `LZ4#encode(input[, chunkSize, highCompression])`.
+
+* `input` (_Buffer_): data to encode
+* `chunkSize` (_Number_): chunk size to use (default=8Mb) (optional)
+* `highCompression` (_Boolean_): use high compression (default=false) (optional)
+
 
 ```javascript
 var fs = require('fs')
@@ -66,15 +72,15 @@ There are 2 ways to decode:
 * __asynchronous__ using nodejs Streams - slowest but can handle very large data sets (no memory limitations)
 * __synchronous__ by feeding the whole LZ4 data - faster but is limited by the amount of memory
 
-Either way, there are 2 options that the decoder takes:
-
-* `chunkSize` (_Number_): number of bytes that was used to compress the data (default=8Mb)
-* `outputSize` (_Number_): number of bytes for the output buffer (default=`chunkSize`)
-
 
 #### Asynchronous decoding
 
-First, create an LZ4 decoding stream with `LZ4#createDecoderStream()`.
+First, create an LZ4 decoding stream with `LZ4#createDecoderStream(options)`.
+
+* `options.chunkSize` (_Number_): chunk size to use (default=8Mb) (optional)
+* `options.outputSize` (_Number_): number of bytes for the output buffer (default=`chunkSize`) (optional)
+
+
 The stream can then decode any data piped to it. It will emit a `data` event on each decoded sequence, which can be saved into an output stream.
 
 The following example shows how to decode an LZ4 compressed file `test.lz4` into `test`.
@@ -95,7 +101,12 @@ input.pipe(decoder).pipe(output)
 
 #### Synchronous decoding
 
-Read the data into memory and feed it to `LZ4#decode()`.
+Read the data into memory and feed it to `LZ4#decode(input[, chunkSize, outputSize])`.
+
+* `input` (_Buffer_): data to decode
+* `chunkSize` (_Number_): chunk size to use (default=8Mb) (optional)
+* `outputSize` (_Number_): number of bytes for the output buffer (default=`chunkSize`) (optional)
+
 
 ```javascript
 var fs = require('fs')
@@ -116,7 +127,6 @@ fs.writeFileSync('test', output)
 ## Restrictions / Issues
 
 * LZ4 streams have only been tested using `bin/lz4demo32`, not `bin/lz4demo64`.
-* Encoding streams is __extremely__ slow
 
 ## License
 

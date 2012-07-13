@@ -11,6 +11,7 @@
   }
 , "main": "./lib/lz4.js"
 , "bugs": { "url" : "http://github.com/pierrec/node-lz4/issues" }
+, "gypfile": true
 , "licenses":
   [ {
       "type": "MIT"
