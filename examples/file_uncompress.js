@@ -11,7 +11,6 @@ var inputFile = process.argv[2] || 'test.lz4'
 var outputFile = process.argv[3] || path.basename(inputFile, lz4.extension)
 
 var decoder = lz4.createDecoderStream()
-// var decoder = lz4.createDecoderStream({ incrementSize: (128 << 20), chunkSize: (128 << 20) })
 
 var input = fs.createReadStream( inputFile )
 var output = fs.createWriteStream( outputFile )

@@ -3,7 +3,7 @@
 , "name": "lz4"
 , "description": "LZ4 streaming compression and decompression"
 , "keywords": ["lz4","compression","decompression","stream"]
-, "version": "0.0.1"
+, "version": "0.0.2"
 , "homepage": "http://github.com/pierrec/node-lz4"
 , "repository": {
     "type": "git"
