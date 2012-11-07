@@ -1,3 +1,4 @@
 .gitignore
+build/
 node_modules/
 data/

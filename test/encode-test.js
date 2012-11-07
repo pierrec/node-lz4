@@ -4,49 +4,82 @@ var assert = require('assert')
 var lz4 = require('..')
 
 describe('LZ4 encoder', function () {
-  var data = fs.readFileSync( __dirname + '/../data/test' )
+  var encoded_data = fs.readFileSync( __dirname + '/../data/test.lz4' )
+  var encodedHC_data = fs.readFileSync( __dirname + '/../data/testHC.lz4' )
+
+  function compare (a, b) {
+    if (a.length !== b.length) return false
+
+    for (var i = 0, n = a.length; i < n; i++) {
+      if (a[i] !== b[i]) return false
+    }
+
+    return true
+  }
 
   describe('sync', function () {
-    var encoded_data = fs.readFileSync( __dirname + '/../data/test.lz4' )
-    it('should encode data', function (done) {
-      var encoded = lz4.encode(data)
+    var decoded_data = fs.readFileSync( __dirname + '/../data/test' )
 
-      var same = true
+    describe('encoding', function () {
+      it('should encode data', function (done) {
+        var encoded = lz4.encode(decoded_data)
 
-      if (encoded.length === encoded_data.length) {
-        for (var i = 0, n = encoded.length; i < n; i++)
-          if (encoded[i] !== encoded_data[i]) {
-            same = false
-            break
-          }
-      } else {
-        same = false
-      }
+        assert( compare(encoded, encoded_data) )
+        done()
+      })
+    })
 
-      assert( same )
-      done()
+    describe('HC encoding', function () {
+      it('should encode data', function (done) {
+        var encoded = lz4.encode(decoded_data, true)
+
+        assert( compare(encoded, encodedHC_data) )
+        done()
+      })
     })
   })
 
-  describe('HC sync', function () {
-    var encoded_data = fs.readFileSync( __dirname + '/../data/testHC.lz4' )
-    it('should encode data', function (done) {
-      var encoded = lz4.encode(data, true)
+  describe('async', function () {
+    describe('encoding', function () {
+      it('should encode data', function (done) {
+        var input = fs.createReadStream( __dirname + '/../data/test' )
+        var encoder = lz4.createEncoderStream()
+        var encoded = []
 
-      var same = true
+        function add (chunk) {
+          if (chunk) encoded.push(chunk)
+        }
 
-      if (encoded.length === encoded_data.length) {
-        for (var i = 0, n = encoded.length; i < n; i++)
-          if (encoded[i] !== encoded_data[i]) {
-            same = false
-            break
-          }
-      } else {
-        same = false
-      }
+        encoder.on('data', add)
+        encoder.on('end', add)
+        encoder.on('end', function () {
+          assert( compare(Buffer.concat(encoded), encoded_data) )
+          done()
+        })
 
-      assert( same )
-      done()
+        input.pipe(encoder)
+      })
+    })
+
+    describe('HC encoding', function () {
+      it('should encode data', function (done) {
+        var input = fs.createReadStream( __dirname + '/../data/test' )
+        var encoder = lz4.createEncoderStream({ hc: true })
+        var encoded = []
+
+        function add (chunk) {
+          if (chunk) encoded.push(chunk)
+        }
+
+        encoder.on('data', add)
+        encoder.on('end', add)
+        encoder.on('end', function () {
+          assert( compare(Buffer.concat(encoded), encodedHC_data) )
+          done()
+        })
+
+        input.pipe(encoder)
+      })
     })
   })
 })

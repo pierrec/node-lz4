@@ -4,15 +4,35 @@ var assert = require('assert')
 var lz4 = require('..')
 
 describe('LZ4 decoder', function () {
-  var data = fs.readFileSync( __dirname + '/../data/test' )
+  var decoded_data = fs.readFileSync( __dirname + '/../data/test' ).toString()
   var encoded_data = fs.readFileSync( __dirname + '/../data/test.lz4' )
 
   describe('sync', function () {
     it('should decode data', function (done) {
       var decoded = lz4.decode(encoded_data)
 
-      assert( data.toString() === decoded.toString() )
+      assert( decoded_data === decoded.toString() )
       done()
+    })
+  })
+
+  describe('async', function () {
+    it('should decode data', function (done) {
+      var input = fs.createReadStream( __dirname + '/../data/test.lz4' )
+      var decoder = lz4.createDecoderStream()
+      var decoded = ''
+
+      function add (data) {
+      	if (data) decoded += data.toString()
+      }
+      decoder.on('data', add)
+      decoder.on('end', add)
+      decoder.on('end', function () {
+      	assert( decoded_data === decoded )
+      	done()
+      })
+
+      input.pipe(decoder)
     })
   })
 })
