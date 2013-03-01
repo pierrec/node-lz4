@@ -28,10 +28,12 @@
 	The license of the demo program is GPL.
 */
 
-//****************************
-// Warning messages
-//****************************
-#define _CRT_SECURE_NO_WARNINGS    // Visual (must be first line)
+//**************************************
+// Compiler Options
+//**************************************
+// Disable some Visual warning messages
+#define _CRT_SECURE_NO_WARNINGS
+#define _CRT_SECURE_NO_DEPRECATE     // VS2005
 
 
 //****************************
@@ -51,13 +53,13 @@
 
 
 //**************************************
-// Compiler functions
+// Compiler-specific functions
 //**************************************
 #define GCC_VERSION (__GNUC__ * 100 + __GNUC_MINOR__)
 
 #if defined(_MSC_VER)    // Visual Studio
 #define swap32 _byteswap_ulong
-#elif GCC_VERSION >= 430
+#elif GCC_VERSION >= 403
 #define swap32 __builtin_bswap32
 #else
 static inline unsigned int swap32(unsigned int x) {
@@ -89,9 +91,9 @@ static inline unsigned int swap32(unsigned int x) {
 // Architecture Macros
 //**************************************
 static const int one = 1;
-#define CPU_LITTLE_ENDIAN (*(char*)(&one))
-#define CPU_BIG_ENDIAN (!CPU_LITTLE_ENDIAN)
-#define LITTLE_ENDIAN32(i)   if (CPU_BIG_ENDIAN) { i = swap32(i); }
+#define CPU_LITTLE_ENDIAN  (*(char*)(&one))
+#define CPU_BIG_ENDIAN     (!CPU_LITTLE_ENDIAN)
+#define LITTLE_ENDIAN32(i) if (CPU_BIG_ENDIAN) { i = swap32(i); }
 
 
 //**************************************
@@ -175,6 +177,7 @@ int compress_file(char* input_filename, char* output_filename, int compressionle
 	int r;
 	int displayLevel = (compressionlevel>0);
 	clock_t start, end;
+	size_t sizeCheck;
 
 
 	// Init
@@ -197,14 +200,15 @@ int compress_file(char* input_filename, char* output_filename, int compressionle
 	u32var = ARCHIVE_MAGICNUMBER;
 	LITTLE_ENDIAN32(u32var);
 	*(unsigned int*)out_buff = u32var;
-	fwrite(out_buff, 1, ARCHIVE_MAGICNUMBER_SIZE, foutput);
+	sizeCheck = fwrite(out_buff, 1, ARCHIVE_MAGICNUMBER_SIZE, foutput);
+	if (sizeCheck!=ARCHIVE_MAGICNUMBER_SIZE) { DISPLAY("write error\n"); return 10; }
 
 	// Main Loop
 	while (1)
 	{
 		int outSize;
 		// Read Block
-	    int inSize = fread(in_buff, 1, CHUNKSIZE, finput);
+	    int inSize = (int) fread(in_buff, (size_t)1, (size_t)CHUNKSIZE, finput);
 		if( inSize<=0 ) break;
 		filesize += inSize;
 		if (displayLevel) DISPLAY("Read : %i MB  \r", (int)(filesize>>20));
@@ -218,7 +222,8 @@ int compress_file(char* input_filename, char* output_filename, int compressionle
 		LITTLE_ENDIAN32(outSize);
 		* (unsigned int*) out_buff = outSize;
 		LITTLE_ENDIAN32(outSize);
-		fwrite(out_buff, 1, outSize+4, foutput);
+		sizeCheck = fwrite(out_buff, 1, outSize+4, foutput);
+		if (sizeCheck!=(size_t)(outSize+4)) { DISPLAY("write error\n"); return 11; }
 	}
 
 	// Status
@@ -252,6 +257,7 @@ int decode_file(char* input_filename, char* output_filename)
 	FILE* foutput;
 	clock_t start, end;
 	int r;
+	size_t sizeCheck;
 
 
 	// Init
@@ -289,7 +295,8 @@ int decode_file(char* input_filename, char* output_filename)
 		filesize += sinkint;
 
 		// Write Block
-		fwrite(out_buff, 1, sinkint, foutput);
+		sizeCheck = fwrite(out_buff, 1, sinkint, foutput);
+		if (sizeCheck != (size_t)sinkint) { DISPLAY("write error\n"); return 12; }
 	}
 
 	// Status
@@ -361,7 +368,10 @@ int main(int argc, char** argv)
 		// Modify Nb Iterations (benchmark only)
 		if ( argument[0] =='i' ) { int iters = argument[1] - '0'; BMK_SetNbIterations(iters); continue; }
 
-		// Test
+		// Pause at the end (benchmark only)
+		if ( argument[0] =='p' ) { BMK_SetPause(); continue; }
+
+        // Test
 		if ( argument[0] =='t' ) { decode=1; output_filename=nulmark; continue; }
 	}
 
