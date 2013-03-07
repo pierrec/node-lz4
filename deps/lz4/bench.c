@@ -25,31 +25,44 @@
 //**************************************
 // Compiler Options
 //**************************************
-// Visual warning messages
+// Disable some Visual warning messages
 #define _CRT_SECURE_NO_WARNINGS
+#define _CRT_SECURE_NO_DEPRECATE     // VS2005
 
-// Under Linux at least, pull in the *64 commands
-#define _LARGEFILE64_SOURCE
+// Unix Large Files support (>4GB)
+#if (defined(__sun__) && (!defined(__LP64__)))   // Sun Solaris 32-bits requires specific definitions
+#  define _LARGEFILE_SOURCE 
+#  define FILE_OFFSET_BITS=64
+#elif ! defined(__LP64__)                        // No point defining Large file for 64 bit
+#  define _LARGEFILE64_SOURCE
+#endif
 
-// MSVC does not support S_ISREG
-#ifndef S_ISREG
-#define S_ISREG(x) (((x) & S_IFMT) == S_IFREG)
+// S_ISREG & gettimeofday() are not supported by MSVC
+#if defined(_MSC_VER)
+#  define S_ISREG(x) (((x) & S_IFMT) == S_IFREG)
+#  define BMK_LEGACY_TIMER 1
 #endif
 
 // GCC does not support _rotl outside of Windows
 #if !defined(_WIN32)
-#define _rotl(x,r) ((x << r) | (x >> (32 - r)))
+#  define _rotl(x,r) ((x << r) | (x >> (32 - r)))
 #endif
 
 
 //**************************************
 // Includes
 //**************************************
-#include <stdlib.h>     // malloc
-#include <stdio.h>      // fprintf, fopen, ftello64
-#include <sys/timeb.h>  // timeb
-#include <sys/types.h>  // stat64
-#include <sys/stat.h>   // stat64
+#include <stdlib.h>      // malloc
+#include <stdio.h>       // fprintf, fopen, ftello64
+#include <sys/types.h>   // stat64
+#include <sys/stat.h>    // stat64
+
+// Use ftime() if gettimeofday() is not available on your target
+#if defined(BMK_LEGACY_TIMER)   
+#  include <sys/timeb.h>   // timeb, ftime
+#else
+#  include <sys/time.h>    // gettimeofday
+#endif
 
 #include "lz4.h"
 #define COMPRESSOR0 LZ4_compress
@@ -120,6 +133,7 @@ struct compressionParameters
 //**************************************
 static int chunkSize = DEFAULT_CHUNKSIZE;
 static int nbIterations = NBLOOPS;
+static int BMK_pause = 0;
 
 void BMK_SetBlocksize(int bsize)
 {
@@ -133,22 +147,43 @@ void BMK_SetNbIterations(int nbLoops)
 	DISPLAY("- %i iterations-", nbIterations);
 }
 
+void BMK_SetPause()
+{
+    BMK_pause = 1;
+}
 
 //*********************************************************
 //  Private functions
 //*********************************************************
 
+#if defined(BMK_LEGACY_TIMER)
+
 static int BMK_GetMilliStart()
 {
-  // Supposed to be portable
+  // Based on Legacy ftime()
   // Rolls over every ~ 12.1 days (0x100000/24/60/60)
   // Use GetMilliSpan to correct for rollover
   struct timeb tb;
   int nCount;
   ftime( &tb );
-  nCount = tb.millitm + (tb.time & 0xfffff) * 1000;
+  nCount = (int) (tb.millitm + (tb.time & 0xfffff) * 1000);
   return nCount;
 }
+
+#else
+
+static int BMK_GetMilliStart()
+{
+  // Based on newer gettimeofday()
+  // Use GetMilliSpan to correct for rollover
+  struct timeval tv;
+  int nCount;
+  gettimeofday(&tv, NULL);
+  nCount = (int) (tv.tv_usec/1000 + (tv.tv_sec & 0xfffff) * 1000);
+  return nCount;
+}
+
+#endif
 
 
 static int BMK_GetMilliSpan( int nTimeStart )
@@ -307,7 +342,7 @@ int BMK_benchFile(char** fileNamesTable, int nbFiles, int cLevel)
 	  // Alloc
 	  chunkP = (struct chunkParameters*) malloc(((benchedsize / chunkSize)+1) * sizeof(struct chunkParameters));
 	  in_buff = malloc((size_t )benchedsize);
-	  nbChunks = (benchedsize / chunkSize) + 1;
+	  nbChunks = (int) (benchedsize / chunkSize) + 1;
 	  maxCChunkSize = LZ4_compressBound(chunkSize);
 	  out_buff_size = nbChunks * maxCChunkSize;
 	  out_buff = malloc((size_t )out_buff_size);
@@ -332,7 +367,7 @@ int BMK_benchFile(char** fileNamesTable, int nbFiles, int cLevel)
 		  {
 			  chunkP[i].id = i;
 			  chunkP[i].inputBuffer = in; in += chunkSize;
-			  if ((int)remaining > chunkSize) { chunkP[i].inputSize = chunkSize; remaining -= chunkSize; } else { chunkP[i].inputSize = remaining; remaining = 0; }
+			  if ((int)remaining > chunkSize) { chunkP[i].inputSize = chunkSize; remaining -= chunkSize; } else { chunkP[i].inputSize = (int)remaining; remaining = 0; }
 			  chunkP[i].outputBuffer = out; out += maxCChunkSize;
 			  chunkP[i].outputSize = 0;
 		  }
@@ -352,7 +387,7 @@ int BMK_benchFile(char** fileNamesTable, int nbFiles, int cLevel)
 	  }
 
 	  // Calculating input Checksum
-	  crcc = BMK_checksum_MMH3A(in_buff, benchedsize);
+	  crcc = BMK_checksum_MMH3A(in_buff, (unsigned int)benchedsize);
 
 
 	  // Bench
@@ -386,7 +421,7 @@ int BMK_benchFile(char** fileNamesTable, int nbFiles, int cLevel)
 		  cSize=0; for (chunkNb=0; chunkNb<nbChunks; chunkNb++) cSize += chunkP[chunkNb].outputSize;
 		  ratio = (double)cSize/(double)benchedsize*100.;
 
-		  DISPLAY("%1i-%-14.14s : %9i -> %9i (%5.2f%%), %6.1f MB/s\r", loopNb, infilename, (int)benchedsize, (int)cSize, ratio, (double)benchedsize / fastestC / 1000.);
+		  DISPLAY("%1i-%-14.14s : %9i -> %9i (%5.2f%%),%7.1f MB/s\r", loopNb, infilename, (int)benchedsize, (int)cSize, ratio, (double)benchedsize / fastestC / 1000.);
 
 		  // Decompression
 		  { size_t i; for (i=0; i<benchedsize; i++) in_buff[i]=0; }     // zeroing area, for CRC checking
@@ -404,19 +439,19 @@ int BMK_benchFile(char** fileNamesTable, int nbFiles, int cLevel)
 		  milliTime = BMK_GetMilliSpan(milliTime);
 
 		  if ((double)milliTime < fastestD*nb_loops) fastestD = (double)milliTime/nb_loops;
-		  DISPLAY("%1i-%-14.14s : %9i -> %9i (%5.2f%%), %6.1f MB/s , %6.1f MB/s\r", loopNb, infilename, (int)benchedsize, (int)cSize, ratio, (double)benchedsize / fastestC / 1000., (double)benchedsize / fastestD / 1000.);
+		  DISPLAY("%1i-%-14.14s : %9i -> %9i (%5.2f%%),%7.1f MB/s ,%7.1f MB/s\r", loopNb, infilename, (int)benchedsize, (int)cSize, ratio, (double)benchedsize / fastestC / 1000., (double)benchedsize / fastestD / 1000.);
 
 		  // CRC Checking
-		  crcd = BMK_checksum_MMH3A(in_buff, benchedsize);
+		  crcd = BMK_checksum_MMH3A(in_buff, (unsigned int)benchedsize);
 		  if (crcc!=crcd) { DISPLAY("\n!!! WARNING !!! %14s : Invalid Checksum : %x != %x\n", infilename, (unsigned)crcc, (unsigned)crcd); break; }
 		}
 
 	    if (crcc==crcd)
 		{
 			if (ratio<100.)
-				DISPLAY("%-16.16s : %9i -> %9i (%5.2f%%), %6.1f MB/s , %6.1f MB/s\n", infilename, (int)benchedsize, (int)cSize, ratio, (double)benchedsize / fastestC / 1000., (double)benchedsize / fastestD / 1000.);
+				DISPLAY("%-16.16s : %9i -> %9i (%5.2f%%),%7.1f MB/s ,%7.1f MB/s\n", infilename, (int)benchedsize, (int)cSize, ratio, (double)benchedsize / fastestC / 1000., (double)benchedsize / fastestD / 1000.);
 			else
-				DISPLAY("%-16.16s : %9i -> %9i (%5.1f%%), %6.1f MB/s , %6.1f MB/s \n", infilename, (int)benchedsize, (int)cSize, ratio, (double)benchedsize / fastestC / 1000., (double)benchedsize / fastestD / 1000.);
+				DISPLAY("%-16.16s : %9i -> %9i (%5.1f%%),%7.1f MB/s ,%7.1f MB/s \n", infilename, (int)benchedsize, (int)cSize, ratio, (double)benchedsize / fastestC / 1000., (double)benchedsize / fastestD / 1000.);
 		}
 		totals += benchedsize;
 		totalz += cSize;
@@ -432,8 +467,9 @@ int BMK_benchFile(char** fileNamesTable, int nbFiles, int cLevel)
   if (nbFiles > 1)
 		printf("%-16.16s :%10llu ->%10llu (%5.2f%%), %6.1f MB/s , %6.1f MB/s\n", "  TOTAL", (long long unsigned int)totals, (long long unsigned int)totalz, (double)totalz/(double)totals*100., (double)totals/totalc/1000., (double)totals/totald/1000.);
 
+  if (BMK_pause) { printf("press enter...\n"); getchar(); }
+
   return 0;
 }
-
 
 
