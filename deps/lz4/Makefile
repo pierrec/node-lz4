@@ -1,20 +1,25 @@
-OS := $(shell uname)
+CC=gcc
+CFLAGS=-I. -std=c99 -Wall -W -Wundef -Wno-implicit-function-declaration
 
+OS := $(shell uname)
 ifeq ($(OS),Linux)
-  OUTPUT32  = lz4demo32
-  OUTPUT64  = lz4demo64
+EXT =
 else
-  OUTPUT32  = LZ4Demo32.exe
-  OUTPUT64  = LZ4Demo64.exe
+EXT =.exe
 endif
 
-all: lz4demo64 lz4demo32 
+default: lz4demo
 
-lz4demo64: lz4.c lz4.h lz4hc.c lz4hc.h bench.c lz4demo.c
-	gcc      -O3 -I. -std=c99 -Wall -W -Wundef -Wno-implicit-function-declaration lz4hc.c lz4.c bench.c lz4demo.c -o $(OUTPUT64)
+all: lz4demo lz4demo32 fuzzer
 
-lz4demo32: lz4.c lz4.h lz4hc.c lz4hc.h bench.c lz4demo.c
-	gcc -m32 -Os -march=native -I. -std=c99 -Wall -W -Wundef -Wno-implicit-function-declaration lz4hc.c lz4.c bench.c lz4demo.c -o $(OUTPUT32)
+lz4demo: lz4.c lz4hc.c bench.c lz4demo.c
+	$(CC)      -O3 $(CFLAGS) $^ -o $@$(EXT)
 
+lz4demo32: lz4.c lz4hc.c bench.c lz4demo.c
+	$(CC) -m32 -Os -march=native $(CFLAGS) $^ -o $@$(EXT)
+
+fuzzer : lz4.c fuzzer.c
+	$(CC)      -O3 $(CFLAGS) $^ -o $@$(EXT)
+	
 clean:
-	rm -f core *.o $(OUTPUT32) $(OUTPUT64)
+	rm -f core *.o lz4demo$(EXT) lz4demo32$(EXT) fuzzer$(EXT)
