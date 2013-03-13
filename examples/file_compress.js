@@ -16,7 +16,6 @@ var input = fs.createReadStream( inputFile )
 var output = fs.createWriteStream( outputFile )
 
 // Timing
-var startTime = Date.now()
 encoder.on('end', function () {
 	var fileSize = fs.statSync(inputFile).size
 	var delta = Date.now() - startTime
@@ -28,4 +27,5 @@ encoder.on('end', function () {
 })
 
 console.log('Compressing %s to %s...', inputFile, outputFile)
+var startTime = Date.now()
 input.pipe(encoder).pipe(output)
