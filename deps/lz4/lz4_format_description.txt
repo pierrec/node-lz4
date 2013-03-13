@@ -118,3 +118,4 @@ or full optimal parsing.
 All these trade-off offer distinctive speed/memory/compression advantages.
 Whatever the method used by the compressor, its result will be decodable
 by any LZ4 decoder if it follows the format specification described above.
+

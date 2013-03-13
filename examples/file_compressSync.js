@@ -13,10 +13,18 @@ var outputFile = process.argv[3] || inputFile + lz4.extension
 // Load the data
 var input = fs.readFileSync( inputFile )
 
-console.log('Compressing', inputFile, 'to', outputFile, '...')
-console.time('lz4')
+// Timing
+
+console.log('Compressing %s to %s...', inputFile, outputFile)
+var startTime = Date.now()
 var compressed = lz4.encode(input)
-console.timeEnd('lz4')
+var delta = Date.now() - startTime
+var fileSize = fs.statSync(inputFile).size
+console.log(
+	'lz4 compressing time: %dms (%dMb/s)'
+,	delta
+,	Math.round( 100 * fileSize / ( delta * (1 << 20) ) * 1000 ) / 100
+)
 
 // Save the uncompressed data
 fs.writeFileSync( outputFile, compressed )

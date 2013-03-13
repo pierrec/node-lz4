@@ -124,19 +124,12 @@ Handle<Value> Uncompress_unknownOutputSize(const Arguments& args) {
   return scope.Close(result->ToUint32());
 }
 
-void Init(Handle<Object> target) {
-  HandleScope scope;
-  target->Set(String::NewSymbol("compress"),
-      FunctionTemplate::New(Compress)->GetFunction());
-  target->Set(String::NewSymbol("compressHC"),
-      FunctionTemplate::New(CompressHC)->GetFunction());
-  target->Set(String::NewSymbol("compressBound"),
-      FunctionTemplate::New(CompressBound)->GetFunction());
-  
-  target->Set(String::NewSymbol("uncompress"),
-      FunctionTemplate::New(Uncompress)->GetFunction());
-  target->Set(String::NewSymbol("uncompress_unknownOutputSize"),
-      FunctionTemplate::New(Uncompress_unknownOutputSize)->GetFunction());
+void init_lz4(Handle<Object> target) {
+  NODE_SET_METHOD(target, "compress", Compress);
+  NODE_SET_METHOD(target, "compressHC", CompressHC);
+  NODE_SET_METHOD(target, "compressBound", CompressBound);
+  NODE_SET_METHOD(target, "uncompress", Uncompress);
+  NODE_SET_METHOD(target, "uncompress_unknownOutputSize", Uncompress_unknownOutputSize);
 }
 
-NODE_MODULE(lz4, Init)
+NODE_MODULE(lz4, init_lz4)

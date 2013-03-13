@@ -15,10 +15,17 @@ var encoder = lz4.createEncoderStream({ hc: true })
 var input = fs.createReadStream( inputFile )
 var output = fs.createWriteStream( outputFile )
 
-console.log('Compressing', inputFile, 'to', outputFile, '...')
+// Timing
 encoder.on('end', function () {
-	console.timeEnd('lz4')
+	var fileSize = fs.statSync(inputFile).size
+	var delta = Date.now() - startTime
+	console.log(
+		'lz4 compressing time: %dms (%dMb/s)'
+	,	delta
+	,	Math.round( 100 * fileSize / ( delta * (1 << 20) ) * 1000 ) / 100
+	)
 })
 
-console.time('lz4')
+console.log('Compressing %s to %s...', inputFile, outputFile)
+var startTime = Date.now()
 input.pipe(encoder).pipe(output)
