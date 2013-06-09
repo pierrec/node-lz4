@@ -1,33 +1,41 @@
 {
-  "author": "Pierre Curto"
-, "name": "lz4"
-, "description": "LZ4 streaming compression and decompression"
-, "keywords": ["lz4","compression","decompression","stream"]
-, "version": "0.0.5"
-, "homepage": "http://github.com/pierrec/node-lz4"
-, "repository": {
-    "type": "git"
-  , "url": "git://github.com/pierrec/node-lz4.git"
-  }
-, "main": "./lib/lz4.js"
-, "bugs": { "url" : "http://github.com/pierrec/node-lz4/issues" }
-, "gypfile": true
-, "licenses":
-  [ {
-      "type": "MIT"
-    , "url": "http://github.com/pierrec/node-lz4/raw/master/LICENSE"
+  "author": {
+    "name": "Pierre Curto"
+  },
+  "name": "lz4",
+  "description": "LZ4 streaming compression and decompression",
+  "keywords": [
+    "lz4",
+    "compression",
+    "decompression",
+    "stream"
+  ],
+  "version": "0.1.1",
+  "homepage": "http://github.com/pierrec/node-lz4",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/pierrec/node-lz4.git"
+  },
+  "main": "./lib/lz4.js",
+  "bugs": {
+    "url": "http://github.com/pierrec/node-lz4/issues"
+  },
+  "gypfile": true,
+  "licenses": [
+    {
+      "type": "MIT",
+      "url": "http://github.com/pierrec/node-lz4/raw/master/LICENSE"
     }
-  ]
-, "engines": {
+  ],
+  "engines": {
     "node": ">= 0.10"
-  }
-, "dependencies": {
-    "inherits": ">= 1.0"
-  }
-, "devDependencies": {
+  },
+  "dependencies": {},
+  "devDependencies": {
     "mocha": ">= 0.10"
-  }
-, "scripts": {
-    "test": "mocha test/*-test.js"
+  },
+  "scripts": {
+    "test": "mocha test/*-test.js",
+    "install": "node-gyp rebuild"
   }
 }

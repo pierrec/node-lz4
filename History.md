@@ -1,7 +1,13 @@
-0.1.0 / 2013-03-12
+0.1.0 / 2013-06-09
 ==================
 
-* Use node v0.10 streams2 interface
+* Updated lz4 source to r96
+* Fixed an issue with small chunkSize parameters
+
+0.1.0 / 2013-03-13
+==================
+
+* Updated streams to use streams2
 
 0.0.5 / 2013-03-12
 ==================
