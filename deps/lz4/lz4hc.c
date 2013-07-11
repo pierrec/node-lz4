@@ -50,9 +50,10 @@ Note : this source file requires "lz4hc_encoder.h"
 // CPU Feature Detection
 //**************************************
 // 32 or 64 bits ?
-#if (defined(__x86_64__) || defined(__x86_64) || defined(__amd64__) || defined(__amd64) \
-  || defined(__ppc64__) || defined(_WIN64) || defined(__LP64__) || defined(_LP64) \
-  || defined(__ia64__) )   // Detects 64 bits mode
+#if (defined(__x86_64__) || defined(_M_X64) || defined(_WIN64) \
+  || defined(__powerpc64__) || defined(__ppc64__) || defined(__PPC64__) \
+  || defined(__64BIT__) || defined(_LP64) || defined(__LP64__) \
+  || defined(__ia64) || defined(__itanium__) || defined(_M_IA64) )   // Detects 64 bits mode
 #  define LZ4_ARCH64 1
 #else
 #  define LZ4_ARCH64 0
@@ -68,7 +69,7 @@ Note : this source file requires "lz4hc_encoder.h"
 #elif (defined(__BIG_ENDIAN__) || defined(__BIG_ENDIAN) || defined(_BIG_ENDIAN)) && !(defined(__LITTLE_ENDIAN__) || defined(__LITTLE_ENDIAN) || defined(_LITTLE_ENDIAN))
 #  define LZ4_BIG_ENDIAN 1
 #elif defined(__sparc) || defined(__sparc__) \
-   || defined(__ppc__) || defined(_POWER) || defined(__powerpc__) || defined(_ARCH_PPC) || defined(__PPC__) || defined(__PPC) || defined(PPC) || defined(__powerpc__) || defined(__powerpc) || defined(powerpc) \
+   || defined(__powerpc__) || defined(__ppc__) || defined(__PPC__) \
    || defined(__hpux)  || defined(__hppa) \
    || defined(_MIPSEB) || defined(__s390__)
 #  define LZ4_BIG_ENDIAN 1
@@ -99,13 +100,12 @@ Note : this source file requires "lz4hc_encoder.h"
 #endif
 
 #ifdef _MSC_VER
-#  define inline __inline             // Visual is not C99, but supports some kind of inline
-#  define forceinline __forceinline   
+#  define forceinline __forceinline
 #  include <intrin.h>                 // For Visual 2005
-#  if LZ4_ARCH64	// 64-bit
+#  if LZ4_ARCH64     // 64-bits
 #    pragma intrinsic(_BitScanForward64) // For Visual 2005
 #    pragma intrinsic(_BitScanReverse64) // For Visual 2005
-#  else
+#  else              // 32-bits
 #    pragma intrinsic(_BitScanForward)   // For Visual 2005
 #    pragma intrinsic(_BitScanReverse)   // For Visual 2005
 #  endif
@@ -158,7 +158,11 @@ Note : this source file requires "lz4hc_encoder.h"
 #endif
 
 #if !defined(LZ4_FORCE_UNALIGNED_ACCESS) && !defined(__GNUC__)
-#  pragma pack(push, 1)
+#  ifdef __IBMC__
+#    pragma pack(1)
+#  else
+#    pragma pack(push, 1)
+#  endif
 #endif
 
 typedef struct _U16_S { U16 v; } _PACKED U16_S;
@@ -204,6 +208,7 @@ typedef struct _U64_S { U64 v; } _PACKED U64_S;
 #define KB *(1U<<10)
 #define MB *(1U<<20)
 #define GB *(1U<<30)
+
 
 //**************************************
 // Architecture-specific macros
@@ -344,7 +349,7 @@ static inline int LZ4_InitHC (LZ4HC_Data_Structure* hc4, const BYTE* base)
 }
 
 
-extern inline void* LZ4_createHC (const char* slidingInputBuffer)
+void* LZ4_createHC (const char* slidingInputBuffer)
 {
     void* hc4 = ALLOCATOR(sizeof(LZ4HC_Data_Structure));
     LZ4_InitHC ((LZ4HC_Data_Structure*)hc4, (const BYTE*)slidingInputBuffer);
@@ -352,7 +357,7 @@ extern inline void* LZ4_createHC (const char* slidingInputBuffer)
 }
 
 
-extern inline int LZ4_freeHC (void* LZ4HC_Data)
+int LZ4_freeHC (void* LZ4HC_Data)
 {
     FREEMEM(LZ4HC_Data);
     return (0);
