@@ -9,6 +9,8 @@
         'deps/lz4/lz4.c',
         'deps/lz4/lz4hc.h',
         'deps/lz4/lz4hc.c',
+        'deps/lz4/xxhash.h',
+        'deps/lz4/xxhash.c',
       ],
       'cflags': [ '-O3' ],
     },

@@ -1,3 +1,9 @@
+0.2.0 / 2013-06-13
+==================
+
+* Updated lz4 source to r97
+* Support for LZ4Stream format v1.4
+
 0.1.1 / 2013-06-09
 ==================
 
