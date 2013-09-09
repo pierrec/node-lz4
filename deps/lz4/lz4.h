@@ -42,7 +42,7 @@ extern "C" {
 // Compiler Options
 //**************************************
 #if defined(_MSC_VER) && !defined(__cplusplus)   // Visual Studio
-#  define inline __forceinline           // Visual C is not C99, but supports some kind of inline. Note : we *do* want to force inline
+#  define inline __inline           // Visual C is not C99, but supports some kind of inline
 #endif
 
 
@@ -66,8 +66,8 @@ LZ4_compress() :
 LZ4_decompress_safe() :
     maxOutputSize : is the size of the destination buffer (which must be already allocated)
     return : the number of bytes decoded in the destination buffer (necessarily <= maxOutputSize)
-             If the source stream is malformed or too large, the function will stop decoding and return a negative result.
-             This function is protected against any kind of buffer overflow attemps (never writes outside of output buffer, and never reads outside of input buffer). It is therefore protected against malicious data packets
+             If the source stream is detected malformed, the function will stop decoding and return a negative result.
+             This function is protected against buffer overflow exploits (never writes outside of output buffer, and never reads outside of input buffer). Therefore, it is protected against malicious data packets
 */
 
 
@@ -82,8 +82,8 @@ static inline int LZ4_compressBound(int isize)   { return ((isize) + ((isize)/25
 LZ4_compressBound() :
     Provides the maximum size that LZ4 may output in a "worst case" scenario (input data not compressible)
     primarily useful for memory allocation of output buffer.
-	inline function is recommended for the general case,
-	macro is also provided when result needs to be evaluated at compile time (such as table size allocation).
+    inline function is recommended for the general case,
+    macro is also provided when result needs to be evaluated at compilation (such as table size allocation).
 
     isize  : is the input size. Max supported value is ~1.9GB
     return : maximum output size in a "worst case" scenario
@@ -114,7 +114,7 @@ LZ4_decompress_fast() :
     return : the number of bytes read from the source buffer (in other words, the compressed size)
              If the source stream is malformed, the function will stop decoding and return a negative result.
     note : This function is a bit faster than LZ4_decompress_safe()
-           This function never writes outside of output buffers, and never read before input buffer, but may read beyond input buffer (since it doesn't know its size) in case of malicious data packet.
+           This function never writes outside of output buffers, but may read beyond input buffer in case of malicious data packet.
            Use this function preferably into a trusted environment (data to decode comes from a trusted source).
            Destination buffer must be already allocated. Its size must be a minimum of 'outputSize' bytes.
 */
@@ -128,8 +128,8 @@ LZ4_decompress_safe_partial() :
     The function stops decompressing operation as soon as 'targetOutputSize' has been reached,
     reducing decompression time.
     return : the number of bytes decoded in the destination buffer (necessarily <= maxOutputSize)
-       Note : this number might be < 'targetOutputSize' if the number of bytes to decode into the compressed block is not enough.
-             Always control how many bytes were  decoded.
+       Note : this number can be < 'targetOutputSize' should the compressed block to decode be smaller.
+             Always control how many bytes were decoded.
              If the source stream is malformed, the function will stop decoding and return a negative result.
              This function never writes outside of output buffer, and never reads outside of input buffer. It is therefore protected against malicious data packets
 */
@@ -146,6 +146,47 @@ int LZ4_decompress_fast_withPrefix64k (const char* source, char* dest, int outpu
 */
 
 
+
+//****************************
+// Stream Functions
+//****************************
+
+void* LZ4_create (const char* inputBuffer);
+int   LZ4_compress_continue (void* LZ4_Data, const char* source, char* dest, int inputSize);
+int   LZ4_compress_limitedOutput_continue (void* LZ4_Data, const char* source, char* dest, int inputSize, int maxOutputSize);
+char* LZ4_slideInputBuffer (void* LZ4_Data);
+int   LZ4_free (void* LZ4_Data);
+
+/* 
+These functions allow the compression of dependent blocks, where each block benefits from prior 64 KB within preceding blocks.
+In order to achieve this, it is necessary to start creating the LZ4 Data Structure, thanks to the function :
+
+void* LZ4_create (const char* inputBuffer);
+The result of the function is the (void*) pointer on the LZ4 Data Structure.
+This pointer will be needed in all other functions.
+If the pointer returned is NULL, then the allocation has failed, and compression must be aborted.
+The only parameter 'const char* inputBuffer' must, obviously, point at the beginning of input buffer.
+The input buffer must be already allocated, and size at least 192KB.
+'inputBuffer' will also be the 'const char* source' of the first block.
+
+All blocks are expected to lay next to each other within the input buffer, starting from 'inputBuffer'.
+To compress each block, use either LZ4_compress_continue() or LZ4_compress_limitedOutput_continue().
+Their behavior are identical to LZ4_compress() or LZ4_compress_limitedOutput(), 
+but require the LZ4 Data Structure as their first argument, and check that each block starts right after the previous one.
+If next block does not begin immediately after the previous one, the compression will fail (return 0).
+
+When it's no longer possible to lay the next block after the previous one (not enough space left into input buffer), a call to : 
+char* LZ4_slideInputBuffer(void* LZ4_Data);
+must be performed. It will typically copy the latest 64KB of input at the beginning of input buffer.
+Note that, for this function to work properly, minimum size of an input buffer must be 192KB.
+==> The memory position where the next input data block must start is provided as the result of the function.
+
+Compression can then resume, using LZ4_compress_continue() or LZ4_compress_limitedOutput_continue(), as usual.
+
+When compression is completed, a call to LZ4_free() will release the memory used by the LZ4 Data Structure.
+*/
+
+
 //****************************
 // Obsolete Functions
 //****************************
@@ -153,7 +194,7 @@ int LZ4_decompress_fast_withPrefix64k (const char* source, char* dest, int outpu
 static inline int LZ4_uncompress (const char* source, char* dest, int outputSize) { return LZ4_decompress_fast(source, dest, outputSize); }
 static inline int LZ4_uncompress_unknownOutputSize (const char* source, char* dest, int isize, int maxOutputSize) { return LZ4_decompress_safe(source, dest, isize, maxOutputSize); }
 
-/* 
+/*
 These functions are deprecated and should no longer be used.
 They are provided here for compatibility with existing user programs.
 */
