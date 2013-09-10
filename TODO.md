@@ -1,1 +1,4 @@
-* shim Buffer.concat for node versions < 0.8.0
+* skippable contents
+* concatenated LZ4 streams
+* LZ4 stream dictionary
+* NodeJS streams updates

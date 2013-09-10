@@ -20,7 +20,7 @@ There are 2 ways to encode:
 
 #### Asynchronous encoding
 
-First, create an LZ4 encoding stream with `LZ4#createEncoderStream(options)`.
+First, create an LZ4 encoding NodeJS stream with `LZ4#createEncoderStream(options)`.
 
 * `options.chunkSize` (_Number_): chunk size to use (default=8Mb) (optional)
 * `options.hc` (_Boolean_): use high compression (default=false) (optional)
@@ -46,11 +46,18 @@ input.pipe(encoder).pipe(output)
 
 #### Synchronous encoding
 
-Read the data into memory and feed it to `LZ4#encode(input[, chunkSize, highCompression])`.
+Read the data into memory and feed it to `LZ4#encode(input[, options])` to decode an LZ4 stream.
 
 * `input` (_Buffer_): data to encode
-* `chunkSize` (_Number_): chunk size to use (default=8Mb) (optional)
-* `highCompression` (_Boolean_): use high compression (default=false) (optional)
+* `options` (_Object_): LZ4 stream options (optional)
+	* `options.blockMaxSize` (_Number_): chunk size to use (default=4Mb)
+	* `options.highCompression` (_Boolean_): use high compression (default=false)
+	* `options.blockIndependence` (_Boolean_): (default=true)
+	* `options.blockChecksum` (_Boolean_): add compressed blocks checksum (default=false)
+	* `options.streamSize` (_Boolean_): add full LZ4 stream size (default=false)
+	* `options.streamChecksum` (_Boolean_): add full LZ4 stream checksum (default=true)
+	* `options.dict` (_Boolean_): use dictionary (default=false)
+	* `options.dictId` (_Integer_): dictionary id (default=0)
 
 
 ```javascript
@@ -75,7 +82,7 @@ There are 2 ways to decode:
 
 #### Asynchronous decoding
 
-First, create an LZ4 decoding stream with `LZ4#createDecoderStream(options)`.
+First, create an LZ4 decoding NodeJS stream with `LZ4#createDecoderStream(options)`.
 
 * `options.chunkSize` (_Number_): chunk size to use (default=8Mb) (optional)
 * `options.outputSize` (_Number_): number of bytes for the output buffer (default=`chunkSize`) (optional)
@@ -101,11 +108,9 @@ input.pipe(decoder).pipe(output)
 
 #### Synchronous decoding
 
-Read the data into memory and feed it to `LZ4#decode(input[, chunkSize, outputSize])`.
+Read the data into memory and feed it to `LZ4#decode(input)` to produce an LZ4 stream.
 
 * `input` (_Buffer_): data to decode
-* `chunkSize` (_Number_): chunk size to use (default=8Mb) (optional)
-* `outputSize` (_Number_): number of bytes for the output buffer (default=`chunkSize`) (optional)
 
 
 ```javascript
