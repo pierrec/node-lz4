@@ -16,7 +16,7 @@ var input = fs.readFileSync( inputFile )
 // Timing
 console.log('Compressing %s to %s...', inputFile, outputFile)
 var startTime = Date.now()
-var compressed = lz4.encode(input, true)
+var compressed = lz4.encode(input, { highCompression: true })
 var fileSize = fs.statSync(inputFile).size
 var delta = Date.now() - startTime
 console.log(
