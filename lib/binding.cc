@@ -11,6 +11,9 @@
 using namespace node;
 using namespace v8;
 
+//-----------------------------------------------------------------------------
+// xxHash
+//-----------------------------------------------------------------------------
 // {Buffer} input, {Integer} seed (optional)
 Handle<Value> xxHash (const Arguments& args) {
   HandleScope scope;
@@ -107,6 +110,11 @@ Handle<Value> xxHash_digest (const Arguments& args) {
   return scope.Close(res->ToUint32());
 }
 
+//-----------------------------------------------------------------------------
+// LZ4 Compress
+//-----------------------------------------------------------------------------
+// Simple functions
+
 // {Buffer} input, {Buffer} output
 Handle<Value> LZ4Compress(const Arguments& args) {
   HandleScope scope;
@@ -155,6 +163,8 @@ Handle<Value> LZ4CompressHC(const Arguments& args) {
   return scope.Close(result->ToUint32());
 }
 
+// Advanced functions
+
 // {Integer} Buffer size
 Handle<Value> LZ4CompressBound(const Arguments& args) {
   HandleScope scope;
@@ -175,6 +185,71 @@ Handle<Value> LZ4CompressBound(const Arguments& args) {
   return scope.Close(result->ToUint32());
 }
 
+// {Buffer} input, {Buffer} output, {Integer} maxOutputSize
+Handle<Value> LZ4CompressLimited(const Arguments& args) {
+  HandleScope scope;
+
+  if (args.Length() != 3) {
+    ThrowException(Exception::Error(String::New("Wrong number of arguments")));
+    return scope.Close(Undefined());
+  }
+
+  if (!Buffer::HasInstance(args[0]) || !Buffer::HasInstance(args[1])) {
+    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
+    return scope.Close(Undefined());
+  }
+
+  if (!args[2]->IsUint32()) {
+    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
+    return scope.Close(Undefined());
+  }
+
+  Local<Object> input = args[0]->ToObject();
+  Local<Object> output = args[1]->ToObject();
+  uint32_t size = args[2]->Uint32Value();
+
+  Local<Integer> result = Integer::NewFromUnsigned(LZ4_compress_limitedOutput(Buffer::Data(input),
+                                                            Buffer::Data(output),
+                                                            Buffer::Length(input),
+                                                            size)
+                                                );
+  return scope.Close(result->ToUint32());
+}
+
+// {Buffer} input, {Buffer} output, {Integer} maxOutputSize
+Handle<Value> LZ4CompressHCLimited(const Arguments& args) {
+  HandleScope scope;
+
+  if (args.Length() != 3) {
+    ThrowException(Exception::Error(String::New("Wrong number of arguments")));
+    return scope.Close(Undefined());
+  }
+
+  if (!Buffer::HasInstance(args[0]) || !Buffer::HasInstance(args[1])) {
+    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
+    return scope.Close(Undefined());
+  }
+
+  if (!args[2]->IsUint32()) {
+    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
+    return scope.Close(Undefined());
+  }
+
+  Local<Object> input = args[0]->ToObject();
+  Local<Object> output = args[1]->ToObject();
+  uint32_t size = args[2]->Uint32Value();
+
+  Local<Integer> result = Integer::NewFromUnsigned(LZ4_compressHC_limitedOutput(Buffer::Data(input),
+                                                            Buffer::Data(output),
+                                                            Buffer::Length(input),
+                                                            size)
+                                                );
+  return scope.Close(result->ToUint32());
+}
+
+//-----------------------------------------------------------------------------
+// LZ4 Uncompress
+//-----------------------------------------------------------------------------
 // {Buffer} input, {Buffer} output
 Handle<Value> LZ4Uncompress(const Arguments& args) {
   HandleScope scope;
@@ -227,7 +302,9 @@ Handle<Value> LZ4Uncompress_unknownOutputSize(const Arguments& args) {
 
 void init_lz4(Handle<Object> target) {
   NODE_SET_METHOD(target, "compress", LZ4Compress);
+  NODE_SET_METHOD(target, "compressLimited", LZ4CompressLimited);
   NODE_SET_METHOD(target, "compressHC", LZ4CompressHC);
+  NODE_SET_METHOD(target, "compressHCLimited", LZ4CompressHCLimited);
   NODE_SET_METHOD(target, "compressBound", LZ4CompressBound);
   NODE_SET_METHOD(target, "uncompress", LZ4Uncompress);
   NODE_SET_METHOD(target, "uncompress_unknownOutputSize", LZ4Uncompress_unknownOutputSize);
