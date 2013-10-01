@@ -78,15 +78,13 @@ Handle<Value> xxHash_update (const Arguments& args) {
     return scope.Close(Undefined());
   }
 
-  //TODO error handling
-  XXH32_update(
+  int err_code = XXH32_update(
     Buffer::Data(args[0])
   , Buffer::Data(args[1])
   , Buffer::Length(args[1])
   );
 
-  return scope.Close(Undefined());
-  // return scope.Close(res->ToUint32());
+  return scope.Close( Integer::NewFromUnsigned(err_code)->ToUint32() );
 }
 
 // {Buffer} state
