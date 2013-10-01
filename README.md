@@ -2,6 +2,9 @@
 
 [LZ4](http://fastcompression.blogspot.fr/) is a very fast compression and decompression algorithm. This nodejs module provides a Javascript implementation of the decoder as well as native bindings to the LZ4 functions. Nodejs Streams are also supported for compression and decompression.
 
+NB.
+Version 0.2 does not support the legacy format, only the one as of "LZ4 Streaming Format 1.4". Use version 0.1 if required.
+
 
 ## Install
 
@@ -82,10 +85,7 @@ There are 2 ways to decode:
 
 #### Asynchronous decoding
 
-First, create an LZ4 decoding NodeJS stream with `LZ4#createDecoderStream(options)`.
-
-* `options.chunkSize` (_Number_): chunk size to use (default=8Mb) (optional)
-* `options.outputSize` (_Number_): number of bytes for the output buffer (default=`chunkSize`) (optional)
+First, create an LZ4 decoding NodeJS stream with `LZ4#createDecoderStream()`.
 
 
 The stream can then decode any data piped to it. It will emit a `data` event on each decoded sequence, which can be saved into an output stream.
@@ -131,7 +131,6 @@ fs.writeFileSync('test', output)
 
 ## Restrictions / Issues
 
-* LZ4 streams have only been tested using `bin/lz4demo32`, not `bin/lz4demo64`.
 
 ## License
 
