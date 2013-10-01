@@ -25,8 +25,15 @@ There are 2 ways to encode:
 
 First, create an LZ4 encoding NodeJS stream with `LZ4#createEncoderStream(options)`.
 
-* `options.chunkSize` (_Number_): chunk size to use (default=8Mb) (optional)
-* `options.hc` (_Boolean_): use high compression (default=false) (optional)
+* `options` (_Object_): LZ4 stream options (optional)
+	* `options.blockMaxSize` (_Number_): chunk size to use (default=4Mb)
+	* `options.highCompression` (_Boolean_): use high compression (default=false)
+	* `options.blockIndependence` (_Boolean_): (default=true)
+	* `options.blockChecksum` (_Boolean_): add compressed blocks checksum (default=false)
+	* `options.streamSize` (_Boolean_): add full LZ4 stream size (default=false)
+	* `options.streamChecksum` (_Boolean_): add full LZ4 stream checksum (default=true)
+	* `options.dict` (_Boolean_): use dictionary (default=false)
+	* `options.dictId` (_Integer_): dictionary id (default=0)
 
 
 The stream can then encode any data piped to it. It will emit a `data` event on each encoded chunk, which can be saved into an output stream.
