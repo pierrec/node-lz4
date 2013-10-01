@@ -1,3 +1,9 @@
+0.2.0 / 2013-10-01
+==================
+
+* Updated lz4 source to r104
+* Support for LZ4Stream format v1.4, legacy format is deprecated, use v0.1 for its support
+
 0.1.2 / 2013-09-09
 ==================
 

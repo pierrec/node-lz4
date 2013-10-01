@@ -13,14 +13,10 @@ var outputFile = process.argv[3] || path.basename(inputFile, lz4.extension)
 // Load the compressed data
 var input = fs.readFileSync( inputFile )
 
-// If the final uncompressed size is known, use it
-// for faster decoding (no time spent resizing the output buffer)
-var outputSize = (128 << 20) // 128Mb
-
 // Timing
 var startTime = Date.now()
 console.log('Uncompressing %s to %s...', inputFile, outputFile)
-var decoded = lz4.decode( input, outputSize )
+var decoded = lz4.decode( input )
 
 var fileSize = fs.statSync(inputFile).size
 var delta = Date.now() - startTime

@@ -1,1 +1,3 @@
-* shim Buffer.concat for node versions < 0.8.0
+* LZ4 stream dictionary
+* NodeJS streams updates
+* dependent blocks compression

@@ -10,7 +10,7 @@
     "decompression",
     "stream"
   ],
-  "version": "0.1.2",
+  "version": "0.2.0",
   "homepage": "http://github.com/pierrec/node-lz4",
   "repository": {
     "type": "git",

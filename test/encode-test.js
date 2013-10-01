@@ -32,7 +32,7 @@ describe('LZ4 encoder', function () {
 
     describe('HC encoding', function () {
       it('should encode data', function (done) {
-        var encoded = lz4.encode(decoded_data, true)
+        var encoded = lz4.encode(decoded_data, { highCompression: true })
 
         assert( compare(encoded, encodedHC_data) )
         done()
@@ -65,7 +65,7 @@ describe('LZ4 encoder', function () {
     describe('encoding with small chunk size', function () {
       it('should encode data', function (done) {
         var input = fs.createReadStream( __dirname + '/../data/test' )
-        var encoder = lz4.createEncoderStream({ chunkSize: 512 })
+        var encoder = lz4.createEncoderStream({ blockMaxSize: 64<<10 })
         var encoded = []
 
         function add (chunk) {
@@ -86,7 +86,7 @@ describe('LZ4 encoder', function () {
     describe('HC encoding', function () {
       it('should encode data', function (done) {
         var input = fs.createReadStream( __dirname + '/../data/test' )
-        var encoder = lz4.createEncoderStream({ hc: true })
+        var encoder = lz4.createEncoderStream({ highCompression: true })
         var encoded = []
 
         function add (chunk) {
