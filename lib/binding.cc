@@ -56,10 +56,8 @@ Handle<Value> xxHash_init (const Arguments& args) {
   }
 
   uint32_t seed = args[0]->Uint32Value();
-  int size = XXH32_sizeofState();
 
-  Buffer *buf = Buffer::New(size);
-  memcpy( Buffer::Data(buf), XXH32_init(seed), size );
+  Buffer *buf = Buffer::New( (char *)XXH32_init(seed), XXH32_sizeofState() );
 
   return scope.Close(buf->handle_);
 }
@@ -304,6 +302,8 @@ void init_lz4(Handle<Object> target) {
   NODE_SET_METHOD(target, "compressHC", LZ4CompressHC);
   NODE_SET_METHOD(target, "compressHCLimited", LZ4CompressHCLimited);
   NODE_SET_METHOD(target, "compressBound", LZ4CompressBound);
+  NODE_SET_METHOD(target, "create", LZ4Stream_create);
+  NODE_SET_METHOD(target, "create", LZ4Stream_create);
   NODE_SET_METHOD(target, "uncompress", LZ4Uncompress);
   NODE_SET_METHOD(target, "uncompress_unknownOutputSize", LZ4Uncompress_unknownOutputSize);
   NODE_SET_METHOD(target, "xxHash", xxHash);
