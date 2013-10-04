@@ -20,7 +20,8 @@ encoder.on('end', function () {
 	var fileSize = fs.statSync(inputFile).size
 	var delta = Date.now() - startTime
 	console.log(
-		'lz4 compressing time: %dms (%dMb/s)'
+		'lz4 compressed %d bytes in %dms (%dMb/s)'
+	,	fileSize
 	,	delta
 	,	Math.round( 100 * fileSize / ( delta * (1 << 20) ) * 1000 ) / 100
 	)

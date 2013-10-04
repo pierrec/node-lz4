@@ -10,17 +10,20 @@ var lz4 = require('..')
 var inputFile = process.argv[2] || 'test'
 var outputFile = process.argv[3] || inputFile + lz4.extension
 
-var encoder = lz4.createEncoderStream({ hc: true })
+var encoder = lz4.createEncoderStream({ highCompression: true })
 
 var input = fs.createReadStream( inputFile )
 var output = fs.createWriteStream( outputFile )
 
 // Timing
 encoder.on('end', function () {
-	var fileSize = fs.statSync(inputFile).size
 	var delta = Date.now() - startTime
+	var fileSize = fs.statSync(inputFile).size
+	var outfileSize = fs.statSync(outputFile).size
 	console.log(
-		'lz4 compressing time: %dms (%dMb/s)'
+		'lz4 compressed %d bytes into %d bytes in %dms (%dMb/s)'
+	,	fileSize
+	,	outfileSize
 	,	delta
 	,	Math.round( 100 * fileSize / ( delta * (1 << 20) ) * 1000 ) / 100
 	)

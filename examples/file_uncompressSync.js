@@ -17,11 +17,12 @@ var input = fs.readFileSync( inputFile )
 var startTime = Date.now()
 console.log('Uncompressing %s to %s...', inputFile, outputFile)
 var decoded = lz4.decode( input )
-
-var fileSize = fs.statSync(inputFile).size
 var delta = Date.now() - startTime
+
+var fileSize = fs.statSync(outputFile).size
 console.log(
-	'lz4 decompressing time: %dms (%dMb/s)'
+	'lz4 decompressed %d bytes in %dms (%dMb/s)'
+,	fileSize
 ,	delta
 ,	Math.round( 100 * fileSize / ( delta * (1 << 20) ) * 1000 ) / 100
 )
