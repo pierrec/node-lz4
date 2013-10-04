@@ -1,3 +1,14 @@
+0.2.2 / 2013-10-04
+==================
+
+* Sync and async decoders share the same code
+* Async decoder emits an error on missing data
+
+0.2.1 / 2013-10-03
+==================
+
+* Fixed encoder reversed logic
+
 0.2.0 / 2013-10-01
 ==================
 
