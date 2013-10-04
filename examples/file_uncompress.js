@@ -12,7 +12,8 @@ var outputFile = process.argv[3] || path.basename(inputFile, lz4.extension)
 
 var decoder = lz4.createDecoderStream()
 
-var input = fs.createReadStream( inputFile )
+// Higher buffer size increases performance
+var input = fs.createReadStream( inputFile, { highWaterMark: 4 << 20 } )
 var output = fs.createWriteStream( outputFile )
 
 // Timing
