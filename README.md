@@ -138,7 +138,7 @@ fs.writeFileSync('test', output)
 
 ## Restrictions / Issues
 
-* `blockIndependence` property only supportted for `false`
+* `blockIndependence` property only supported for `true`
 
 
 ## License
