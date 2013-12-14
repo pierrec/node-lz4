@@ -620,6 +620,11 @@ void* LZ4_create (const char* inputBuffer)
 }
 
 
+int LZ4_sizeofDataStruct (void* LZ4_Data) {
+  return sizeof(LZ4_Data_Structure);
+}
+
+
 int LZ4_free (void* LZ4_Data)
 {
     FREEMEM(LZ4_Data);

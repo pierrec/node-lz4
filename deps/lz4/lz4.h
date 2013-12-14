@@ -139,6 +139,7 @@ LZ4_decompress_safe_partial() :
 // Stream Functions
 //****************************
 
+int LZ4_sizeofDataStruct ();
 void* LZ4_create (const char* inputBuffer);
 int   LZ4_compress_continue (void* LZ4_Data, const char* source, char* dest, int inputSize);
 int   LZ4_compress_limitedOutput_continue (void* LZ4_Data, const char* source, char* dest, int inputSize, int maxOutputSize);
