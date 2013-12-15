@@ -19,7 +19,7 @@ console.log('Uncompressing %s to %s...', inputFile, outputFile)
 var decoded = lz4.decode( input )
 var delta = Date.now() - startTime
 
-var fileSize = fs.statSync(outputFile).size
+var fileSize = outputFile.length
 console.log(
 	'lz4 decompressed %d bytes in %dms (%dMb/s)'
 ,	fileSize

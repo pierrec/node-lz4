@@ -1,7 +1,8 @@
-0.2.3 / 2013-12-14
+0.2.3 / 2013-12-15
 ==================
 
 * Fixed handling of uncompressed data
+* Sync and async encoders share the same code
 
 0.2.2 / 2013-10-04
 ==================
