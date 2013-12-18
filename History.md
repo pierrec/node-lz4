@@ -1,3 +1,8 @@
+0.1.2 / 2013-12-18
+==================
+
+* Fixed pure JS decoder (must run with an emulated nodejs Buffer such as https://github.com/arextar/browser-buffer)
+
 0.1.1 / 2013-06-09
 ==================
 

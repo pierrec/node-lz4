@@ -1,0 +1,12 @@
+<html>
+<body>
+	<script type="text/javascript" src="browser-buffer.js"></script>
+	<script type="text/javascript" src="../lib/decoder-js.js"></script>
+	<script type="text/javascript">
+	console.log(lz4)
+	var buf = new Buffer([0x02,0x21,0x4C,0x18,0x05,0x00,0x00,0x00,0x40,0x61,0x62,0x63,0x0A])
+	console.log(buf)
+	console.log( lz4.decode(buf).toString() )
+	</script>
+</body>
+</html>

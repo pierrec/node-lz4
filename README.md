@@ -119,6 +119,15 @@ fs.writeFileSync('test', output)
 
 ```
 
+## Browser usage
+
+LZ4 decompression is supported within the browser, although with some caveats:
+
+* `Buffer` must exist. Tested with https://github.com/arextar/browser-buffer
+* The compressed data must be provided via a Buffer instance
+
+See the examples/www/uncompress.html for a basic example.
+
 
 ## How it works
 
