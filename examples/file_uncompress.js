@@ -18,8 +18,8 @@ var output = fs.createWriteStream( outputFile )
 
 // Timing
 var startTime = Date.now()
+var fileSize = fs.statSync(inputFile).size
 decoder.on('end', function () {
-	var fileSize = fs.statSync(outputFile).size
 	var delta = Date.now() - startTime
 	console.log(
 		'lz4 decompressed %d bytes in %dms (%dMb/s)'
