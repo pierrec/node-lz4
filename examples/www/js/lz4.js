@@ -7303,6 +7303,9 @@ module.exports.decode = require('./decoder').LZ4_uncompress
 module.exports.createEncoderStream = require('./encoder_stream')
 module.exports.encode = require('./encoder').LZ4_compress
 
+// Expose chunk decoder
+module.exports.decodeBlock = module.exports.createDecoderStream.prototype.uncompressBlock
+
 // HACK
 if (typeof window != 'undefined' && window) {
 	// Browserified
