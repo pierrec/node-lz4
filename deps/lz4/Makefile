@@ -1,70 +1,122 @@
 # ################################################################
-# LZ4 Makefile
-# Copyright (C) Yann Collet 2011-2013
-# GPL v2 License
-#
-# This program is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation; either version 2 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License along
-# with this program; if not, write to the Free Software Foundation, Inc.,
-# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-#
+# LZ4 library - Makefile
+# Copyright (C) Yann Collet 2011-2014
+# All rights reserved.
+# 
+# BSD license
+# Redistribution and use in source and binary forms, with or without modification,
+# are permitted provided that the following conditions are met:
+# 
+# * Redistributions of source code must retain the above copyright notice, this
+#   list of conditions and the following disclaimer.
+# 
+# * Redistributions in binary form must reproduce the above copyright notice, this
+#   list of conditions and the following disclaimer in the documentation and/or
+#   other materials provided with the distribution.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+# ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+# 
 # You can contact the author at :
 #  - LZ4 source repository : http://code.google.com/p/lz4/
-# ################################################################
-# lz4 : Command Line Utility, supporting gzip-like arguments
-# lz4c  : CLU, supporting also legacy lz4demo arguments
-# lz4c32: Same as lz4c, but forced to compile in 32-bits mode
-# fuzzer  : Test tool, to check lz4 integrity on target platform
-# fuzzer32: Same as fuzzer, but forced to compile in 32-bits mode
-# fullbench  : Precisely measure speed for each LZ4 function variant
-# fullbench32: Same as fullbench, but forced to compile in 32-bits mode
+#  - LZ4 forum froup : https://groups.google.com/forum/#!forum/lz4c
 # ################################################################
 
+RELEASE=r113
+DESTDIR=
+PREFIX=/usr
 CC=gcc
-CFLAGS=-I. -std=c99 -Wall -W -Wundef -Wno-implicit-function-declaration
+CFLAGS+= -I. -std=c99 -Wall -W -Wundef -DLZ4_VERSION=\"$(RELEASE)\"
+
+LIBDIR=$(PREFIX)/lib
+INCLUDEDIR=$(PREFIX)/include
+PRGDIR=programs
+DISTRIBNAME=lz4-$(RELEASE).tar.gz
+
 
 # Define *.exe as extension for Windows systems
-OS := $(shell uname)
-ifeq ($(OS),Linux)
-EXT =
-else
+ifneq (,$(filter Windows%,$(OS)))
 EXT =.exe
+else
+EXT =
 endif
 
-default: lz4c
+TEXT = lz4.c lz4.h lz4hc.c lz4hc.h \
+	lz4_format_description.txt Makefile NEWS LICENSE \
+	cmake_unofficial/CMakeLists.txt \
+	$(PRGDIR)/fullbench.c $(PRGDIR)/fuzzer.c $(PRGDIR)/lz4cli.c \
+	$(PRGDIR)/lz4io.c $(PRGDIR)/lz4io.h \
+	$(PRGDIR)/bench.c $(PRGDIR)/bench.h \
+	$(PRGDIR)/xxhash.c $(PRGDIR)/xxhash.h \
+	$(PRGDIR)/lz4.1 $(PRGDIR)/Makefile $(PRGDIR)/COPYING
+NONTEXT = LZ4_Streaming_Format.odt
+SOURCES = $(TEXT) $(NONTEXT)
 
-all: lz4 lz4c lz4c32 fuzzer fuzzer32 fullbench fullbench32
 
-lz4: lz4.c lz4hc.c bench.c xxhash.c lz4cli.c
-	$(CC)      -O3 $(CFLAGS) -DDISABLE_LZ4C_LEGACY_OPTIONS $^ -o $@$(EXT)
+default: liblz4
+	@cd $(PRGDIR); make
 
-lz4c: lz4.c lz4hc.c bench.c xxhash.c lz4cli.c
-	$(CC)      -O3 $(CFLAGS) $^ -o $@$(EXT)
+all: liblz4 lz4programs
 
-lz4c32: lz4.c lz4hc.c bench.c xxhash.c lz4cli.c
-	$(CC) -m32 -O3 $(CFLAGS) $^ -o $@$(EXT)
+liblz4: liblz4.a liblz4.so
 
-fuzzer : lz4.c lz4hc.c fuzzer.c
-	@echo fuzzer is a test tool to check lz4 integrity on target platform
-	$(CC)      -O3 $(CFLAGS) $^ -o $@$(EXT)
+lz4programs: lz4.c lz4hc.c
+	@cd $(PRGDIR); make all
 
-fuzzer32 : lz4.c lz4hc.c fuzzer.c
-	$(CC) -m32 -O3 $(CFLAGS) $^ -o $@$(EXT)
+liblz4.a: lz4.c lz4hc.c
+	$(CC) -O3 -c $(CFLAGS) $^
+	ar rcs liblz4.a lz4.o lz4hc.o
 
-fullbench : lz4.c lz4hc.c xxhash.c fullbench.c
-	$(CC)      -O3 $(CFLAGS) $^ -o $@$(EXT)
-
-fullbench32 : lz4.c lz4hc.c xxhash.c fullbench.c
-	$(CC) -m32 -O3 $(CFLAGS) $^ -o $@$(EXT)
+liblz4.so: lz4.c lz4hc.c
+	$(CC) -shared -fPIC -Wl,--soname=liblz4.so.1 $(CFLAGS) $^ -o $@
 
 clean:
-	rm -f core *.o lz4$(EXT) lz4c$(EXT) lz4c32$(EXT) fuzzer$(EXT) fuzzer32$(EXT) fullbench$(EXT) fullbench32$(EXT)
+	@rm -f core *.o *.a *.so $(DISTRIBNAME)
+	@cd $(PRGDIR); make clean
+	@echo Cleaning completed
+
+
+#ifeq ($(shell uname),Linux)
+ifneq (,$(filter $(shell uname),Linux Darwin))
+
+install: liblz4
+	@install -d -m 755 $(DESTDIR)$(LIBDIR)/ $(DESTDIR)$(INCLUDEDIR)/
+	@install -m 755 liblz4.a $(DESTDIR)$(LIBDIR)/liblz4.a
+	@install -m 755 liblz4.so $(DESTDIR)$(LIBDIR)/liblz4.so
+	@install -m 755 lz4.h $(DESTDIR)$(INCLUDEDIR)/lz4.h
+	@install -m 755 lz4hc.h $(DESTDIR)$(INCLUDEDIR)/lz4hc.h
+	@echo lz4 static and shared library installed
+	@cd $(PRGDIR); make install
+
+uninstall:
+	[ -x $(DESTDIR)$(LIBDIR)/liblz4.a ] && rm -f $(DESTDIR)$(LIBDIR)/liblz4.a
+	[ -x $(DESTDIR)$(LIBDIR)/liblz4.so ] && rm -f $(DESTDIR)$(LIBDIR)/liblz4.so
+	[ -f $(DESTDIR)$(INCLUDEDIR)/lz4.h ] && rm -f $(DESTDIR)$(INCLUDEDIR)/lz4.h
+	[ -f $(DESTDIR)$(INCLUDEDIR)/lz4hc.h ] && rm -f $(DESTDIR)$(INCLUDEDIR)/lz4hc.h
+	@echo lz4 libraries successfully uninstalled
+	@cd $(PRGDIR); make uninstall
+
+dist: clean
+	@install -dD -m 700 lz4-$(RELEASE)/programs/
+	@install -dD -m 700 lz4-$(RELEASE)/cmake_unofficial/
+	@for f in $(TEXT); do \
+		tr -d '\r' < $$f > .tmp; \
+		install -m 600 .tmp lz4-$(RELEASE)/$$f; \
+	done
+	@rm .tmp
+	@for f in $(NONTEXT); do \
+		install -m 600 $$f lz4-$(RELEASE)/$$f; \
+	done
+	@tar -czf $(DISTRIBNAME) lz4-$(RELEASE)/
+	@rm -rf lz4-$(RELEASE)
+	@echo Distribution $(DISTRIBNAME) built
+
+endif

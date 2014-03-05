@@ -8,7 +8,20 @@ Version 0.2 does not support the legacy format, only the one as of "LZ4 Streamin
 
 ## Install
 
+With NodeJS:
+
 	npm install lz4
+
+Within the browser, using `build/lz4.js`:
+
+	<script type="text/javascript" src="path/to/lz4.js"></script>
+	<script type="text/javascript">
+	var Buffer = require('buffer').Buffer
+	var LZ4 = require('lz4')
+	// LZ4 archive v1.4 compressed string: abc\n
+	var compressed = new Buffer([0x04,0x22,0x4D,0x18,0x64,0x70,0xB9,0x05,0x00,0x00,0x80,0x61,0x62,0x63,0x0A,0x0A,0x00,0x00,0x00,0x00,0xAB,0xAC,0x8F,0x54])
+	console.log( LZ4.decode(compressed).toString() ) // abc\n
+	</script>
 
 
 ## Usage
@@ -130,6 +143,20 @@ var output = lz4.decode(input)
 fs.writeFileSync('test', output)
 
 ```
+
+## Block level encoding/decoding
+
+In some cases, it is useful to be able to manipulate an LZ4 block instead of an LZ4 stream. The functions to decode and encode are therefore exposed as:
+
+* `LZ4#decodeBlock`(_Number_) >=0: uncompressed size, <0: error at offset
+	* `input` (_Buffer_): data block to decode
+	* `output` (_Buffer_): decoded data block
+* `LZ4#encodeBlock` (_Number_) >0: compressed size, =0: not compressible
+	* `input` (_Buffer_): data block to encode
+	* `output` (_Buffer_): encoded data block
+* `LZ4#encodeBlockHC` (_Number_) >0: compressed size, =0: not compressible
+	* `input` (_Buffer_): data block to encode with high compression
+	* `output` (_Buffer_): encoded data block
 
 
 ## How it works

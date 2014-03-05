@@ -109,9 +109,6 @@
 #define EXTENSION ".lz4"
 #define WELCOME_MESSAGE "*** %s %s %i-bits, by %s (%s) ***\n", COMPRESSOR_NAME, COMPRESSOR_VERSION, (int)(sizeof(void*)*8), AUTHOR, COMPILED
 
-#define UNLZ4  "unlz4"
-#define LZ4CAT "lz4cat"
-
 #define KB *(1U<<10)
 #define MB *(1U<<20)
 #define GB *(1U<<30)
@@ -170,12 +167,7 @@ char nulmark[] = "/dev/null";
 // Local Parameters
 //**************************************
 static char* programName;
-<<<<<<< HEAD:deps/lz4/lz4c.c
-static int silence = 0;
-static int verbose = 0;
-=======
 static int displayLevel = 2;   // 0 : no display  // 1: errors  // 2 : + result + interaction + warnings ;  // 3 : + progression;  // 4 : + information
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
 static int overwrite = 0;
 static int blockSizeId = LZ4S_BLOCKSIZEID_DEFAULT;
 static int blockChecksum = 0;
@@ -207,36 +199,19 @@ int usage()
     DISPLAY( "Usage :\n");
     DISPLAY( "      %s [arg] [input] [output]\n", programName);
     DISPLAY( "\n");
-<<<<<<< HEAD:deps/lz4/lz4c.c
-    DISPLAY( "input   : a filename, or \n");
-    DISPLAY( "          '%s' or '-' for pipe mode (default if empty)\n", stdinmark);
-=======
     DISPLAY( "input   : a filename\n");
     DISPLAY( "          with no FILE, or when FILE is - or %s, read standard input\n", stdinmark);
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
     DISPLAY( "Arguments :\n");
     DISPLAY( " -1     : Fast compression (default) \n");
     DISPLAY( " -9     : High compression \n");
     DISPLAY( " -d     : decompression \n");
-<<<<<<< HEAD:deps/lz4/lz4c.c
-    DISPLAY( " -y     : overwrite without prompting \n");
-    DISPLAY( " -h/-H  : Help (this text + advanced options)\n");
-=======
     DISPLAY( " -f     : overwrite output without prompting \n");
     DISPLAY( " -h/-H  : display help/long help and exit\n");
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
     return 0;
 }
 
 int usage_advanced()
 {
-<<<<<<< HEAD:deps/lz4/lz4c.c
-    usage();
-    DISPLAY( "\n");
-    DISPLAY( "Advanced options :\n");
-    DISPLAY( " -v     : be verbose \n");
-    DISPLAY( " -t     : test compressed file \n");
-=======
     DISPLAY(WELCOME_MESSAGE);
     usage();
     DISPLAY( "\n");
@@ -247,7 +222,6 @@ int usage_advanced()
     DISPLAY( " -c     : force write to standard output, even if it is the console\n");
     DISPLAY( " -t     : test compressed file integrity\n");
     DISPLAY( " -z     : force compression\n");
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
     DISPLAY( " -B#    : Block size [4-7](default : 7)\n");
     DISPLAY( " -BD    : Block dependency (improve compression ratio)\n");
     DISPLAY( " -BX    : enable block checksum (default:disabled)\n");
@@ -255,31 +229,6 @@ int usage_advanced()
     DISPLAY( "Benchmark arguments :\n");
     DISPLAY( " -b     : benchmark file(s)\n");
     DISPLAY( " -i#    : iteration loops [1-9](default : 3), benchmark mode only\n");
-<<<<<<< HEAD:deps/lz4/lz4c.c
-    DISPLAY( "\n");
-    DISPLAY( "output  : a filename, or \n");
-    DISPLAY( "          '%s', or '-' for pipe mode\n", stdoutmark);
-    DISPLAY( "          or '%s'\n", NULL_OUTPUT);
-    DISPLAY( "          default if empty : stdout if input is stdin\n");
-    DISPLAY( "                             input.lz4 if compression selected\n");
-    DISPLAY( "                             input without '.lz4' if decompression\n");
-    DISPLAY( "\n");
-    DISPLAY( "Examples :\n");
-    DISPLAY( "1 : compress file 'filename', using default output name 'filename.lz4'\n");
-    DISPLAY( "          %s filename\n", programName);
-    DISPLAY( "2 : compress 'filename' in high compression mode, overwrite output if exists\n");
-    DISPLAY( "          %s -hcy filename \n", programName);
-    DISPLAY( "3 : compress data stream from 'generator', send result to 'consumer'\n");
-    DISPLAY( "          generator | %s | consumer \n", programName);
-    return 0;
-}
-
-int badusage()
-{
-    DISPLAY("Wrong parameters\n");
-    usage();
-    exit(1);
-=======
 #if !defined(DISABLE_LZ4C_LEGACY_OPTIONS)
     DISPLAY( "Legacy arguments :\n");
     DISPLAY( " -c0    : fast compression\n");
@@ -339,7 +288,6 @@ int usage_longhelp()
     DISPLAY( "which would display help text and exit\n");
 #endif // DISABLE_LZ4C_LEGACY_OPTIONS
     return 0;
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
 }
 
 int badusage()
@@ -360,11 +308,7 @@ int get_fileHandle(char* input_filename, char* output_filename, FILE** pfinput, 
 
     if (!strcmp (input_filename, stdinmark)) 
     {
-<<<<<<< HEAD:deps/lz4/lz4c.c
-        if (verbose) DISPLAY( "Using stdin for input\n");
-=======
         DISPLAYLEVEL(4,"Using stdin for input\n");
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
         *pfinput = stdin;
         SET_BINARY_MODE(stdin);
     } 
@@ -375,11 +319,7 @@ int get_fileHandle(char* input_filename, char* output_filename, FILE** pfinput, 
 
     if (!strcmp (output_filename, stdoutmark)) 
     {
-<<<<<<< HEAD:deps/lz4/lz4c.c
-        if (verbose) DISPLAY( "Using stdout for output\n");
-=======
         DISPLAYLEVEL(4,"Using stdout for output\n");
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
         *pfoutput = stdout;
         SET_BINARY_MODE(stdout);
     } 
@@ -394,14 +334,9 @@ int get_fileHandle(char* input_filename, char* output_filename, FILE** pfinput, 
             if (!overwrite)
             {
                 char ch;
-<<<<<<< HEAD:deps/lz4/lz4c.c
-                DISPLAY( "Warning : %s already exists\n", output_filename); 
-                DISPLAY( "Overwrite ? (Y/N) : ");
-=======
                 DISPLAYLEVEL(2, "Warning : %s already exists\n", output_filename); 
                 DISPLAYLEVEL(2, "Overwrite ? (Y/N) : ");
                 if (displayLevel <= 1) EXM_THROW(11, "Operation aborted : %s already exists", output_filename);   // No interaction possible
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
                 ch = (char)getchar();
                 if ((ch!='Y') && (ch!='y')) EXM_THROW(11, "Operation aborted : %s already exists", output_filename);
             }
@@ -475,19 +410,11 @@ int legacy_compress_file(char* input_filename, char* output_filename, int compre
 
     // Status
     end = clock();
-<<<<<<< HEAD:deps/lz4/lz4c.c
-    if (!silence) DISPLAY( "Compressed %llu bytes into %llu bytes ==> %.2f%%\n",
-        (unsigned long long) filesize, (unsigned long long) compressedfilesize, (double)compressedfilesize/filesize*100);
-    {
-        double seconds = (double)(end - start)/CLOCKS_PER_SEC;
-        if (verbose) DISPLAY( "Done in %.2f s ==> %.2f MB/s\n", seconds, (double)filesize / seconds / 1024 / 1024);
-=======
     DISPLAYLEVEL(2,"Compressed %llu bytes into %llu bytes ==> %.2f%%\n",
         (unsigned long long) filesize, (unsigned long long) compressedfilesize, (double)compressedfilesize/filesize*100);
     {
         double seconds = (double)(end - start)/CLOCKS_PER_SEC;
         DISPLAYLEVEL(4,"Done in %.2f s ==> %.2f MB/s\n", seconds, (double)filesize / seconds / 1024 / 1024);
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
     }
 
     // Close & Free
@@ -514,10 +441,6 @@ int compress_file_blockDependency(char* input_filename, char* output_filename, i
     char* out_buff;
     FILE* finput;
     FILE* foutput;
-<<<<<<< HEAD:deps/lz4/lz4c.c
-    int displayLevel = ((compressionlevel>0) && (!silence)) || (verbose);
-=======
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
     clock_t start, end;
     unsigned int blockSize, inputBufferSize;
     size_t sizeCheck, header_size;
@@ -638,19 +561,11 @@ int compress_file_blockDependency(char* input_filename, char* output_filename, i
 
     // Status
     end = clock();
-<<<<<<< HEAD:deps/lz4/lz4c.c
-    if (!silence) DISPLAY( "Compressed %llu bytes into %llu bytes ==> %.2f%%\n",
-        (unsigned long long) filesize, (unsigned long long) compressedfilesize, (double)compressedfilesize/filesize*100);
-    {
-        double seconds = (double)(end - start)/CLOCKS_PER_SEC;
-        if (verbose) DISPLAY( "Done in %.2f s ==> %.2f MB/s\n", seconds, (double)filesize / seconds / 1024 / 1024);
-=======
     DISPLAYLEVEL(2, "Compressed %llu bytes into %llu bytes ==> %.2f%%\n",
         (unsigned long long) filesize, (unsigned long long) compressedfilesize, (double)compressedfilesize/filesize*100);
     {
         double seconds = (double)(end - start)/CLOCKS_PER_SEC;
         DISPLAYLEVEL(4, "Done in %.2f s ==> %.2f MB/s\n", seconds, (double)filesize / seconds / 1024 / 1024);
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
     }
 
     // Close & Free
@@ -675,10 +590,6 @@ int compress_file(char* input_filename, char* output_filename, int compressionle
     char* headerBuffer;
     FILE* finput;
     FILE* foutput;
-<<<<<<< HEAD:deps/lz4/lz4c.c
-    int displayLevel = ((compressionlevel>0) && (!silence)) || (verbose);
-=======
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
     clock_t start, end;
     int blockSize;
     size_t sizeCheck, header_size, readSize;
@@ -732,11 +643,7 @@ int compress_file(char* input_filename, char* output_filename, int compressionle
         unsigned int outSize;
 
         filesize += readSize;
-<<<<<<< HEAD:deps/lz4/lz4c.c
-        if (displayLevel) DISPLAY("Read : %i MB  \r", (int)(filesize>>20));
-=======
         DISPLAYLEVEL(3, "Read : %i MB  \r", (int)(filesize>>20));
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
         if (streamChecksum) XXH32_update(streamChecksumState, in_buff, (int)readSize);
 
         // Compress Block
@@ -802,19 +709,11 @@ int compress_file(char* input_filename, char* output_filename, int compressionle
 
     // Final Status
     end = clock();
-<<<<<<< HEAD:deps/lz4/lz4c.c
-    if (!silence) DISPLAY( "Compressed %llu bytes into %llu bytes ==> %.2f%%\n",
-        (unsigned long long) filesize, (unsigned long long) compressedfilesize, (double)compressedfilesize/filesize*100);
-    {
-        double seconds = (double)(end - start)/CLOCKS_PER_SEC;
-        if (verbose) DISPLAY( "Done in %.2f s ==> %.2f MB/s\n", seconds, (double)filesize / seconds / 1024 / 1024);
-=======
     DISPLAYLEVEL(2, "Compressed %llu bytes into %llu bytes ==> %.2f%%\n",
         (unsigned long long) filesize, (unsigned long long) compressedfilesize, (double)compressedfilesize/filesize*100);
     {
         double seconds = (double)(end - start)/CLOCKS_PER_SEC;
         DISPLAYLEVEL(4, "Done in %.2f s ==> %.2f MB/s\n", seconds, (double)filesize / seconds / 1024 / 1024);
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
     }
 
     return 0;
@@ -1051,11 +950,7 @@ unsigned long long selectDecoder( FILE* finput,  FILE* foutput)
     case LZ4S_MAGICNUMBER:
         return decodeLZ4S(finput, foutput);
     case LEGACY_MAGICNUMBER:
-<<<<<<< HEAD:deps/lz4/lz4c.c
-        if (verbose) DISPLAY("Detected : Legacy format \n");
-=======
         DISPLAYLEVEL(4, "Detected : Legacy format \n");
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
         return decodeLegacyStream(finput, foutput);
     case LZ4S_SKIPPABLE0:
         DISPLAYLEVEL(4, "Skipping detected skippable area \n");
@@ -1094,17 +989,10 @@ int decodeFile(char* input_filename, char* output_filename)
 
     // Final Status
     end = clock();
-<<<<<<< HEAD:deps/lz4/lz4c.c
-    if (!silence) DISPLAY( "Successfully decoded %llu bytes \n", filesize);
-    {
-        double seconds = (double)(end - start)/CLOCKS_PER_SEC;
-        if (verbose) DISPLAY( "Done in %.2f s ==> %.2f MB/s\n", seconds, (double)filesize / seconds / 1024 / 1024);
-=======
     DISPLAYLEVEL(2, "Successfully decoded %llu bytes \n", filesize);
     {
         double seconds = (double)(end - start)/CLOCKS_PER_SEC;
         DISPLAYLEVEL(4, "Done in %.2f s ==> %.2f MB/s\n", seconds, (double)filesize / seconds / 1024 / 1024);
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
     }
 
     // Close
@@ -1123,26 +1011,15 @@ int main(int argc, char** argv)
         decode=0,
         bench=0,
         filenamesStart=2,
-<<<<<<< HEAD:deps/lz4/lz4c.c
-        legacy_format=0;
-=======
         legacy_format=0,
         forceStdout=0;
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
     char* input_filename=0;
     char* output_filename=0;
     char nullOutput[] = NULL_OUTPUT;
     char extension[] = EXTENSION;
 
-<<<<<<< HEAD:deps/lz4/lz4c.c
-    // Select behavior
-    programName = argv[0];
-    if (strstr(programName, UNLZ4)) { decode=1; silence=1; }
-    else if (strstr(programName, LZ4CAT)) { decode=1; silence=1; output_filename=stdoutmark; }
-=======
     // Init
     programName = argv[0];
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
 
     for(i=1; i<argc; i++)
     {
@@ -1153,10 +1030,7 @@ int main(int argc, char** argv)
         // Decode command (note : aggregated commands are allowed)
         if (argument[0]=='-')
         {
-<<<<<<< HEAD:deps/lz4/lz4c.c
-=======
             // '-' means stdin/stdout
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
             if (argument[1]==0)
             {
                 if (!input_filename) input_filename=stdinmark;
@@ -1180,14 +1054,6 @@ int main(int argc, char** argv)
 
                 switch(argument[0])
                 {
-<<<<<<< HEAD:deps/lz4/lz4c.c
-                    // Display help on usage
-                case 'H': usage_advanced(); return 0;
-
-                    // Compression (default)
-                case 'c': if ((argument[1] >='0') && (argument[1] <='1')) { cLevel=argument[1] - '0'; argument++; } break;
-                case 'h': if (argument[1]=='c') { cLevel=1; argument++; } else { usage_advanced(); return 0; } break;
-=======
                     // Display help
                 case 'V': DISPLAY(WELCOME_MESSAGE); return 0;   // Version
                 case 'h': usage_advanced(); return 0;
@@ -1207,7 +1073,6 @@ int main(int argc, char** argv)
                 case '7':
                 case '8':
                 case '9': cLevel=1; break;
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
 
                     // Use Legacy format (hidden option)
                 case 'l': legacy_format=1; break;
@@ -1279,15 +1144,6 @@ int main(int argc, char** argv)
                     // Pause at the end (benchmark only) (hidden option)
                 case 'p': BMK_SetPause(); break;
 
-<<<<<<< HEAD:deps/lz4/lz4c.c
-                    // Overwrite
-                case 'y': overwrite=1; break;
-
-                    // Verbose mode
-                case 'v': verbose=1; break;
-
-=======
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
                     // Unrecognised command
                 default : badusage();
                 }
@@ -1307,31 +1163,19 @@ int main(int argc, char** argv)
         }
     }
 
-<<<<<<< HEAD:deps/lz4/lz4c.c
-    if (verbose) DISPLAY( WELCOME_MESSAGE);
-=======
     DISPLAYLEVEL(4, WELCOME_MESSAGE);
     DISPLAYLEVEL(4, "Blocks size : %i KB\n", (1 << ((blockSizeId*2)-2)));
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
 
     // No input filename ==> use stdin
     if(!input_filename) { input_filename=stdinmark; }
 
-<<<<<<< HEAD:deps/lz4/lz4c.c
-    // Check if benchmark was required
-=======
     // Check if benchmark is selected
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
     if (bench) return BMK_benchFile(argv+filenamesStart, argc-filenamesStart, cLevel);
 
     // No output filename ==> select one automatically (when possible)
     if (!output_filename) 
     {
-<<<<<<< HEAD:deps/lz4/lz4c.c
-        if (input_filename == stdinmark) { output_filename=stdoutmark; silence=1; }
-=======
         if (!IS_CONSOLE(stdout)) { output_filename=stdoutmark; }
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
         else if (!decode)   // compression
         {
             int i=0, l=0;
@@ -1339,11 +1183,7 @@ int main(int argc, char** argv)
             output_filename = (char*)calloc(1,l+5);
             for (i=0;i<l;i++) output_filename[i] = input_filename[i];
             for (i=l;i<l+4;i++) output_filename[i] = extension[i-l];
-<<<<<<< HEAD:deps/lz4/lz4c.c
-            if (!silence) DISPLAY("Compressed filename will be : %s \n", output_filename);
-=======
             DISPLAYLEVEL(2, "Compressed filename will be : %s \n", output_filename);
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
         }
         else                // decompression (input file must respect format extension ".lz4")
         {
@@ -1353,25 +1193,6 @@ int main(int argc, char** argv)
             for (outl=0;outl<inl;outl++) output_filename[outl] = input_filename[outl];
             if (inl>4)
                 while ((outl >= inl-4) && (input_filename[outl] ==  extension[outl-inl+4])) output_filename[outl--]=0;
-<<<<<<< HEAD:deps/lz4/lz4c.c
-            if (outl != inl-5) { DISPLAY("Cannot automatically decide an output filename\n"); badusage(); }
-        }
-    }
-
-    if ((decode ? input_filename==stdinmark : output_filename==stdoutmark)
-        && !overwrite
-#ifdef _WIN32
-        && _isatty (_fileno ((decode ? stdin : stdout))))
-#else
-        &&  isatty ( fileno ((decode ? stdin : stdout))))
-#endif
-        badusage();
-
-    if ((input_filename == stdinmark) && (output_filename == stdoutmark)) silence=1;
-
-    if (verbose) silence=0;
-
-=======
             if (outl != inl-5) { DISPLAYLEVEL(1, "Cannot automatically decide an output filename\n"); badusage(); }
             DISPLAYLEVEL(2, "Decoding file %s \n", output_filename);
         }
@@ -1385,17 +1206,12 @@ int main(int argc, char** argv)
     if (!strcmp(output_filename,stdoutmark) && IS_CONSOLE(stdout) && !forceStdout) badusage();
 
     // Decompress input if selected
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
     if (decode) return decodeFile(input_filename, output_filename);
 
     // compression is default action
     if (legacy_format)
     {
-<<<<<<< HEAD:deps/lz4/lz4c.c
-        if (!silence) DISPLAY("! Generating compressed LZ4 using Legacy format (deprecated !) ! \n");
-=======
         DISPLAYLEVEL(2, "! Generating compressed LZ4 using Legacy format (deprecated !) ! \n");
->>>>>>> 0.2:deps/lz4/.svn/pristine/f6/f60fe203c4c0bf4a29777b86f89cc2ceb9f27195.svn-base
         return legacy_compress_file(input_filename, output_filename, cLevel);   
     }
     else

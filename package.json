@@ -30,12 +30,15 @@
   "engines": {
     "node": ">= 0.10"
   },
-  "dependencies": {},
+  "dependencies": {
+    "xxhashjs": "latest"
+  },
   "devDependencies": {
-    "mocha": ">= 0.10"
+    "mocha": ">= 0.10",
+    "browserify": ">= 3.x"
   },
   "scripts": {
-    "test": "mocha test/*-test.js",
+    "test": "mocha",
     "install": "node-gyp rebuild"
   }
 }

@@ -1,3 +1,11 @@
+0.2.4 / 2014-03-05
+==================
+
+* Updated lz4 source to r113
+* Split xxHash and LZ4 bindings
+* Added browser support via ./build/lz4.js and ./build/lz4.min.js
+* Exposed block level compression/decompression functions
+
 0.2.3 / 2013-12-15
 ==================
 
