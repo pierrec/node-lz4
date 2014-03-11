@@ -14,14 +14,36 @@ With NodeJS:
 
 Within the browser, using `build/lz4.js`:
 
-	<script type="text/javascript" src="path/to/lz4.js"></script>
+	<script type="text/javascript" src="/path/to/lz4.js"></script>
 	<script type="text/javascript">
+	// Nodejs-like Buffer built-in
 	var Buffer = require('buffer').Buffer
 	var LZ4 = require('lz4')
-	// LZ4 archive v1.4 compressed string: abc\n
-	var compressed = new Buffer([0x04,0x22,0x4D,0x18,0x64,0x70,0xB9,0x05,0x00,0x00,0x80,0x61,0x62,0x63,0x0A,0x0A,0x00,0x00,0x00,0x00,0xAB,0xAC,0x8F,0x54])
-	console.log( LZ4.decode(compressed).toString() ) // abc\n
+
+	// Some data to be compressed
+	var data = 'Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.'
+	data += data
+	// LZ4 can only work on Buffers
+	var input = new Buffer(data)
+	// Initialize the output buffer to its maximum length based on the input data
+	var output = new Buffer( LZ4.encodeBound(input.length) )
+
+	// block compression (no archive format)
+	var compressedSize = LZ4.encodeBlock(input, output)
+	// remove unnecessary bytes
+	output = output.slice(0, compressedSize)
+
+	console.log( "compressed data", output.slice(0, compressedSize) )
+
+	// block decompression (no archive format)
+	var uncompressed = new Buffer(input.length)
+	var uncompressedSize = LZ4.decodeBlock(output, uncompressed)
+	uncompressed = uncompressed.slice(0, uncompressedSize)
+
+	console.log( "uncompressed data", uncompressed )
 	</script>
+
+See below for more LZ4 functions.
 
 
 ## Usage
@@ -148,15 +170,22 @@ fs.writeFileSync('test', output)
 
 In some cases, it is useful to be able to manipulate an LZ4 block instead of an LZ4 stream. The functions to decode and encode are therefore exposed as:
 
-* `LZ4#decodeBlock`(_Number_) >=0: uncompressed size, <0: error at offset
+* `LZ4#decodeBlock(input, output)` (_Number_) >=0: uncompressed size, <0: error at offset
 	* `input` (_Buffer_): data block to decode
 	* `output` (_Buffer_): decoded data block
-* `LZ4#encodeBlock` (_Number_) >0: compressed size, =0: not compressible
+* `LZ4#encodeBound(inputSize)` (_Number_): maximum size for a compressed block
+	* `inputSize` (_Number_) size of the input, 0 if too large
+	This is required to size the buffer for a block encoded data
+* `LZ4#encodeBlock(input, output)` (_Number_) >0: compressed size, =0: not compressible
 	* `input` (_Buffer_): data block to encode
 	* `output` (_Buffer_): encoded data block
-* `LZ4#encodeBlockHC` (_Number_) >0: compressed size, =0: not compressible
+* `LZ4#encodeBlockHC(input, output)` (_Number_) >0: compressed size, =0: not compressible
 	* `input` (_Buffer_): data block to encode with high compression
 	* `output` (_Buffer_): encoded data block
+
+
+Blocks do not have any magic number and are provided as is. It is useful to store somewhere the size of the original input for decoding.
+LZ4#encodeBlockHC() is not available as pure Javascript.
 
 
 ## How it works

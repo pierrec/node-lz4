@@ -1,3 +1,8 @@
+0.3.0 / 2014-03-11
+==================
+
+* First release of the pure Javascript encoder
+
 0.2.4 / 2014-03-05
 ==================
 

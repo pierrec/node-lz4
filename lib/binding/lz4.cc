@@ -278,7 +278,7 @@ Handle<Value> LZ4Uncompress(const Arguments& args) {
 }
 
 // {Buffer} input, {Buffer} output
-Handle<Value> LZ4Uncompress_unknownOutputSize(const Arguments& args) {
+Handle<Value> LZ4Uncompress_fast(const Arguments& args) {
   HandleScope scope;
 
   if (args.Length() != 2) {
@@ -294,26 +294,27 @@ Handle<Value> LZ4Uncompress_unknownOutputSize(const Arguments& args) {
   Local<Object> input = args[0]->ToObject();
   Local<Object> output = args[1]->ToObject();
 
-  Local<Integer> result = Integer::NewFromUnsigned(LZ4_uncompress_unknownOutputSize(Buffer::Data(input),
+  Local<Integer> result = Integer::NewFromUnsigned(LZ4_decompress_fast(Buffer::Data(input),
                                                             Buffer::Data(output),
-                                                            Buffer::Length(input),
                                                             Buffer::Length(output))
                                                 );
   return scope.Close(result->ToUint32());
 }
 
 void init_lz4(Handle<Object> target) {
+  NODE_SET_METHOD(target, "compressBound", LZ4CompressBound);
   NODE_SET_METHOD(target, "compress", LZ4Compress);
   NODE_SET_METHOD(target, "compressLimited", LZ4CompressLimited);
-  NODE_SET_METHOD(target, "compressHC", LZ4CompressHC);
-  NODE_SET_METHOD(target, "compressHCLimited", LZ4CompressHCLimited);
-  NODE_SET_METHOD(target, "compressBound", LZ4CompressBound);
   NODE_SET_METHOD(target, "lz4s_create", LZ4Stream_create);
   NODE_SET_METHOD(target, "lz4s_compress_continue", LZ4Stream_compress_continue);
   NODE_SET_METHOD(target, "lz4s_slide_input", LZ4Stream_slideInputBuffer);
   NODE_SET_METHOD(target, "lz4s_free", LZ4Stream_free);
+
+  NODE_SET_METHOD(target, "compressHC", LZ4CompressHC);
+  NODE_SET_METHOD(target, "compressHCLimited", LZ4CompressHCLimited);
+
   NODE_SET_METHOD(target, "uncompress", LZ4Uncompress);
-  NODE_SET_METHOD(target, "uncompress_unknownOutputSize", LZ4Uncompress_unknownOutputSize);
+  NODE_SET_METHOD(target, "uncompress_fast", LZ4Uncompress_fast);
 }
 
 NODE_MODULE(lz4, init_lz4)

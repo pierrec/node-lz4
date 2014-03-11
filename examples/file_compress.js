@@ -15,6 +15,7 @@ var encoder = lz4.createEncoderStream()
 var input = fs.createReadStream( inputFile )
 var output = fs.createWriteStream( outputFile )
 
+
 // Timing
 encoder.on('end', function () {
 	var fileSize = fs.statSync(inputFile).size

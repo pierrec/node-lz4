@@ -10,7 +10,7 @@
     "decompression",
     "stream"
   ],
-  "version": "0.2.4",
+  "version": "0.3.0",
   "homepage": "http://github.com/pierrec/node-lz4",
   "repository": {
     "type": "git",
@@ -32,6 +32,7 @@
   },
   "dependencies": {
     "xxhashjs": "latest"
+  , "cuint": "latest"
   },
   "devDependencies": {
     "mocha": ">= 0.10",

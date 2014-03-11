@@ -1,0 +1,49 @@
+<html>
+	<head>
+		<title>LZ4 compress</title>
+	</head>
+<body>
+	<script type="text/javascript" src="../build/lz4.js"></script>
+	<script type="text/javascript">
+		function encodeBlock () {
+			var Buffer = require('buffer').Buffer
+			var LZ4 = require('lz4')
+
+			var str = document.getElementById('input').value
+			var input = new Buffer(str)
+			var maxOutputSize = LZ4.encodeBound(input.length)
+			var output = new Buffer(maxOutputSize)
+
+			console.debug("maxOutputSize", maxOutputSize)
+			var startTime = Date.now()
+			var outputSize = LZ4.encodeBlock( input, output )
+			var endTime = Date.now()
+			console.log("encoded in " + (endTime-startTime) + "ms")
+			// Resize according to the compressed size
+			output = output.slice(0, outputSize)
+
+			console.debug("output", output)
+			var outputB64 = btoa( encodeURIComponent(output) )
+			document.getElementById('output').value = outputB64
+
+			document.getElementById('inputSize').innerHTML = "Size: " + str.length
+			document.getElementById('outputSize').innerHTML = "Buffer size: " + output.length + "<br> B64 size: " + outputB64.length
+		}
+	</script>
+	<div>
+		<label>Input data</label>
+		<div id="inputSize"></div>
+		<p>
+			<textarea id="input" rows="5" cols="50"></textarea>
+		</p>
+			<button id="encode" onclick="encodeBlock()">Encode</button>
+	</div>
+	<div>
+		<label>Compressed data</label>
+		<div id="outputSize"></div>
+		<p>
+			<textarea id="output" rows="5" cols="50"></textarea>
+		</p>
+	</div>
+</body>
+</html>

@@ -1,6 +1,9 @@
 <html>
+	<head>
+		<title>LZ4 uncompress</title>
+	</head>
 <body>
-	<script type="text/javascript" src="../build/lz4.min.js"></script>
+	<script type="text/javascript" src="../build/lz4.js"></script>
 	<script type="text/javascript">
 	var Buffer = require('buffer').Buffer
 	var LZ4 = require('lz4')
@@ -8,10 +11,12 @@
 	var compressed = new Buffer([0x04,0x22,0x4D,0x18,0x64,0x70,0xB9,0x05,0x00,0x00,0x80,0x61,0x62,0x63,0x0A,0x0A,0x00,0x00,0x00,0x00,0xAB,0xAC,0x8F,0x54])
 	console.log( "decode", LZ4.decode(compressed).toString() ) // abc\n
 	// LZ4 compressed block
-	var compressedBlock = new Buffer([0x64,0x70,0xB9,0x05,0x00,0x00,0x80,0x61,0x62,0x63,0x0A,0x0A,0x00,0x00,0x00,0x00,0xAB,0xAC,0x8F,0x54])
-	var uncompressedBlock = new Buffer(4)
-	LZ4.decodeBlock(compressedBlock, uncompressedBlock)
-	console.log( "decodeBlock", uncompressedBlock.toString() ) // abc\n
+	var compressedBlock = new Buffer([0x47,0x61,0x62,0x63,0x64,0x04,0x00,0x50,0x64,0x61,0x62,0x63,0x64])
+	// var compressedBlock = new Buffer([0x40,0x61,0x62,0x63,0x64])
+	var uncompressedBlock = new Buffer(compressedBlock.length*10)
+	var n = LZ4.decodeBlock(compressedBlock, uncompressedBlock)
+	uncompressedBlock = uncompressedBlock.slice(0,n)
+	console.log( "decodeBlock", uncompressedBlock.toString() ) // abcdabcdabcdabcd
 	</script>
 </body>
 </html>
