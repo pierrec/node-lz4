@@ -18,7 +18,9 @@ console.log('Uncompressing %s to %s...', inputFile, outputFile)
 var startTime = Date.now()
 
 // decodeBlock is synchronous
+// native
 // var uncompressedBlockSize = lz4.decodeBlock(input, output)
+// javascript
 var uncompressedBlockSize = require('../lib/binding').uncompress(input, output)
 
 // Timing

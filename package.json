@@ -36,7 +36,8 @@
   },
   "devDependencies": {
     "mocha": ">= 0.10",
-    "browserify": ">= 3.x"
+    "browserify": ">= 3.x",
+    "benchmark": "*"
   },
   "scripts": {
     "test": "mocha",
