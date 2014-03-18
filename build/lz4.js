@@ -4294,9 +4294,11 @@ exports.uncompress = function (input, output) {
 	// Process each sequence in the incoming data
 	for (var i = 0, n = input.length, j = 0; i < n;) {
 		var token = input[i++]
+//console.log("\ntoken", token, "i", i)
 
 		// Literals
 		var literals_length = (token >> 4)
+//console.log("literals_length", literals_length)
 		if (literals_length > 0) {
 			// length of literals
 			var l = literals_length + 240
@@ -4307,6 +4309,7 @@ exports.uncompress = function (input, output) {
 
 			// Copy the literals
 			var end = i + literals_length
+//console.log("end", end, "i", i)
 			while (i < end) output[j++] = input[i++]
 
 			// End of buffer?
@@ -4315,150 +4318,172 @@ exports.uncompress = function (input, output) {
 
 		// Match copy
 		// 2 bytes offset (little endian)
+//console.log("i", i, "[i]", input[i], "[i+1]", input[i+1])
 		var offset = input[i++] | (input[i++] << 8)
+//console.log("offset", offset, "i", i)
 
 		// 0 is an invalid offset value
 		if (offset === 0) return -(i-2)
 
 		// length of match copy
 		var match_length = (token & 0xf)
+//console.log("match_length init", match_length)
 		var l = match_length + 240
 		while (l === 255) {
 			l = input[i++]
 			match_length += l
 		}
+//console.log("match_length", match_length, "i", i)
 
 		// Copy the match
 		var pos = j - offset // position of the match copy in the current output
 		var end = j + match_length + 4 // minmatch = 4
+//console.log("j", j, "pos", pos, "end", end)
 		while (j < end) output[j++] = output[pos++]
 	}
 
 	return j
 }
 
-//-----------------------------------------------------------------------------
 var
-	minMatch			= 4
-,	hashLog				= 17
-,	hashShift			= (minMatch * 8) - hashLog
-,	incompressible		= 128
-,	MaxInputSize		= 0x7E000000
-,	copyLength			= 8
-,	lastLiterals		= 5
-,	mfLimit				= copyLength + minMatch
+	maxInputSize	= 0x7E000000
+,	minMatch		= 4
+// uint32() optimization
+,	hashLog			= 16
+,	hashShift		= (minMatch * 8) - hashLog
+,	hashSize		= 1 << hashLog
 
-var
-	mlBits  = 4
-,	mlMask  = (1 << mlBits) - 1
-,	runBits = 8 - mlBits
-,	runMask = (1 << runBits) - 1
+,	copyLength		= 8
+,	lastLiterals	= 5
+,	mfLimit			= copyLength + minMatch
+,	skipStrength	= 6
 
-var hasher = uint32(2654435761)
+,	mlBits  		= 4
+,	mlMask  		= (1 << mlBits) - 1
+,	runBits 		= 8 - mlBits
+,	runMask 		= (1 << runBits) - 1
+
+,	hasher 			= uint32(2654435761)
 
 // CompressBound returns the maximum length of a lz4 block, given it's uncompressed length
 exports.compressBound = function (isize) {
-	return isize > MaxInputSize
+	return isize > maxInputSize
 		? 0
 		: (isize + (isize/255) + 16) | 0
 }
 
 exports.compress = function (src, dst) {
-	var hashTable = {}
+	var Hash = uint32() // Reusable unsigned 32 bits integer
 	var pos = 0
 	var dpos = 0
-	var anchor = pos
+	var anchor = 0
+	// V8 optimization: non sparse array with integers
+	var hashTable = new Array(hashSize)
+	for (var i = 0; i < hashSize; i++) {
+		hashTable[i] = 0
+	}
 
-	if (src.length >= MaxInputSize) throw new Error("input too large")
+	if (src.length >= maxInputSize) throw new Error("input too large")
 
-	// Minimum of input bytes for compression
+
+	// Minimum of input bytes for compression (LZ4 specs)
 	if (src.length > mfLimit) {
-
-console.log("src.length", src.length)
-console.log(exports.compressBound)
 		var n = exports.compressBound(src.length)
-		if ( dst.length < n ) throw Error("output too small: " + dst.length + "<" + n)
+		if ( dst.length < n ) throw Error("output too small: " + dst.length + " < " + n)
 
 		var 
 			step  = 1
-		,	limit = incompressible
-		// Keep last few bytes incompressible to comply with LZ4 specs:
+		,	findMatchAttempts = (1 << skipStrength) + 3
+		// Keep last few bytes incompressible (LZ4 specs):
 		// last 5 bytes must be literals
 		,	srcLength = src.length - lastLiterals
 
-		while (pos+4 < srcLength) {
+		while (pos + minMatch < srcLength) {
 			// Find a match
 			// min match of 4 bytes aka sequence
 			var sequenceLowBits = src[pos+1]<<8 | src[pos]
 			var sequenceHighBits = src[pos+3]<<8 | src[pos+2]
 			// compute hash for the current sequence
-			var hash = uint32(sequenceLowBits, sequenceHighBits)
+			var hash = Hash.fromBits(sequenceLowBits, sequenceHighBits)
 							.multiply(hasher)
 							.shiftr(hashShift)
 							.toNumber()
 			// get the position of the sequence matching the hash
 			// NB. since 2 different sequences may have the same hash
 			// it is double-checked below
-			var ref = hashTable[hash]
+			// do -1 to distinguish between initialized and uninitialized values
+			var ref = hashTable[hash] - 1
 			// save position of current sequence in hash table
-			hashTable[hash] = pos
+			hashTable[hash] = pos + 1
 
 			// first reference or within 64k limit or current sequence !== hashed one: no match
-			if ( typeof ref == 'undefined' ||
+			if ( ref < 0 ||
 				((pos - ref) >>> 16) > 0 ||
 				(
-					((src[ref+3]<<8 | src[ref+2]) !== sequenceHighBits) &&
-					((src[ref+1]<<8 | src[ref]) !== sequenceLowBits )
+					((src[ref+3]<<8 | src[ref+2]) != sequenceHighBits) &&
+					((src[ref+1]<<8 | src[ref]) != sequenceLowBits )
 				)
 			) {
-				// increase scan step if nothing found within limit
-				if (pos-anchor > limit) {
-					limit <<= 1
-					step += 1 + (step >> 2)
-				}
+				// increase step if nothing found within limit
+				step = findMatchAttempts++ >> skipStrength
 				pos += step
 				continue
 			}
 
-			if (step > 1) {
-				hashTable[hash] = ref
-				pos -= step - 1
-				step = 1
-				continue
-			}
-			limit = incompressible
+			findMatchAttempts = (1 << skipStrength) + 3
 
 			// got a match
-			var ln = pos - anchor
-			var back = pos - ref
+			var literals_length = pos - anchor
+			var offset = pos - ref
 
-			var _anchor = anchor
-
+			// minMatch already verified
 			pos += minMatch
 			ref += minMatch
-			anchor = pos
 
+			// move to the end of the match (>=minMatch)
+			var match_length = pos
 			while (pos < srcLength && src[pos] == src[ref]) {
 				pos++
 				ref++
 			}
 
-			var mlLen = pos - anchor
-
-			writeLiterals(ln, mlLen, _anchor)
-
-			// offset
-			dst[dpos++] = back
-			dst[dpos++] = (back >> 8)
-
 			// match length
-			if (mlLen > mlMask-1) {
-				mlLen -= mlMask
-				for (; mlLen > 254; mlLen -= 255) {
+			match_length = pos - match_length
+
+			// token
+			var token = match_length < mlMask ? match_length : mlMask
+
+			// encode literals length
+			if (literals_length >= runMask) {
+				// add match length to the token
+				dst[dpos++] = (runMask << mlBits) + token
+				for (var len = literals_length - runMask; len > 254; len -= 255) {
+					dst[dpos++] = 255
+				}
+				dst[dpos++] = len
+			} else {
+				// add match length to the token
+				dst[dpos++] = (literals_length << mlBits) + token
+			}
+
+			// write literals
+			for (var i = 0; i < literals_length; i++) {
+				dst[dpos++] = src[anchor+i]
+			}
+
+			// encode offset
+			dst[dpos++] = offset
+			dst[dpos++] = (offset >> 8)
+
+			// encode match length
+			if (match_length >= mlMask) {
+				match_length -= mlMask
+				while (match_length >= 255) {
+					match_length -= 255
 					dst[dpos++] = 255
 				}
 
-				dst[dpos++] = mlLen
+				dst[dpos++] = match_length
 			}
 
 			anchor = pos
@@ -4469,32 +4494,26 @@ console.log(exports.compressBound)
 	if (anchor == 0) return 0
 
 	// Write last literals
-	writeLiterals(src.length - anchor, 0, anchor)
+	// encode literals length
+	literals_length = src.length - anchor
+	if (literals_length >= runMask) {
+		// add match length to the token
+		dst[dpos++] = (runMask << mlBits)
+		for (var ln = literals_length - runMask; ln > 254; ln -= 255) {
+			dst[dpos++] = 255
+		}
+		dst[dpos++] = ln
+	} else {
+		// add match length to the token
+		dst[dpos++] = (literals_length << mlBits)
+	}
+
+	// write literals
+	while (pos < src.length) {
+		dst[dpos++] = src[pos++]
+	}
 
 	return dpos
-
-	function writeLiterals (length, mlLen, pos) {
-		var ln = length
-
-		var code = ln > runMask-1 ? runMask : (ln & 0xFF)
-
-		dst[dpos++] = (code << mlBits) + ((mlLen > mlMask-1 ? mlMask : mlLen) & 0xFF)
-
-		if (code === runMask) {
-			ln -= runMask
-			for (; ln > 254; ln -= 255) {
-				dst[dpos++] = 255
-			}
-
-			dst[dpos++] = ln
-		}
-
-		for (var i = 0; i < length; i++) {
-			dst[dpos+i] = src[pos+i]
-		}
-
-		dpos += length
-	}
 }
 
 },{"cuint":28}],19:[function(require,module,exports){
@@ -4686,7 +4705,7 @@ Decoder.prototype.read_DictId = function () {
 	if (this.descriptor.dictId) {
 		var pos = this.pos
 		if ( this.check_Size(SIZES.DICTID) ) return true
-		this.dictId = this.buffer.readUInt32LE(pos, false)
+		this.dictId = this.buffer.readUInt32LE(pos, true)
 	}
 
 	this.state = STATES.DESCRIPTOR_CHECKSUM
@@ -4710,7 +4729,7 @@ Decoder.prototype.read_DescriptorChecksum = function () {
 Decoder.prototype.read_DataBlockSize = function () {
 	var pos = this.pos
 	if ( this.check_Size(SIZES.DATABLOCK_SIZE) ) return true
-	var datablock_size = this.buffer.readUInt32LE(pos, false)
+	var datablock_size = this.buffer.readUInt32LE(pos, true)
 	// Uncompressed
 	if ( datablock_size === lz4_static.EOS ) {
 		this.state = STATES.EOS
@@ -4742,7 +4761,7 @@ Decoder.prototype.read_DataBlockData = function () {
 Decoder.prototype.read_DataBlockChecksum = function () {
 	if (this.descriptor.blockChecksum) {
 		if ( this.check_Size(SIZES.DATABLOCK_CHECKSUM) ) return true
-		var checksum = this.buffer.readUInt32LE(this.pos-4, false)
+		var checksum = this.buffer.readUInt32LE(this.pos-4, true)
 		var currentChecksum = utils.blockChecksum( this.dataBlock )
 		if (currentChecksum !== checksum) {
 			this.pos = pos
@@ -4784,7 +4803,7 @@ Decoder.prototype.read_EOS = function () {
 	if (this.descriptor.streamChecksum) {
 		var pos = this.pos
 		if ( this.check_Size(SIZES.EOS) ) return true
-		var checksum = this.buffer.readUInt32LE(pos, false)
+		var checksum = this.buffer.readUInt32LE(pos, true)
 		if ( checksum !== utils.streamChecksum(null, this.currentStreamChecksum) ) {
 			this.pos = pos
 			this.emit_Error( 'Invalid stream checksum: ' + checksum.toString(16).toUpperCase() )
@@ -4941,9 +4960,6 @@ function Encoder (options) {
 }
 inherits(Encoder, Transform)
 
-Encoder.prototype.encodeBlockHC = lz4_binding.compressHC
-Encoder.prototype.encodeBlock = lz4_binding.compress
-
 // Header = magic number + stream descriptor
 Encoder.prototype.headerSize = function () {
 	var streamSizeSize = this.options.streamSize ? SIZES.DESCRIPTOR : 0
@@ -4957,26 +4973,26 @@ Encoder.prototype.header = function () {
 	var output = new Buffer(headerSize)
 
 	this.state = STATES.MAGIC
-	output.writeUInt32LE(lz4_static.MAGICNUMBER, 0, false)
+	output.writeUInt32LE(lz4_static.MAGICNUMBER, 0, true)
 
 	this.state = STATES.DESCRIPTOR
 	var descriptor = output.slice(SIZES.MAGIC, output.length - 1)
 
 	// Update the stream descriptor
-	descriptor.writeUInt8(this.descriptor.flg, 0, false)
-	descriptor.writeUInt8(this.descriptor.bd, 1, false)
+	descriptor.writeUInt8(this.descriptor.flg, 0, true)
+	descriptor.writeUInt8(this.descriptor.bd, 1, true)
 
 	var pos = 2
 	this.state = STATES.SIZE
 	if (this.options.streamSize) {
 		//TODO only 32bits size supported
-		descriptor.writeUInt32LE(0, pos, false)
-		descriptor.writeUInt32LE(this.size, pos + 4, false)
+		descriptor.writeUInt32LE(0, pos, true)
+		descriptor.writeUInt32LE(this.size, pos + 4, true)
 		pos += SIZES.SIZE
 	}
 	this.state = STATES.DICTID
 	if (this.options.dict) {
-		descriptor.writeUInt32LE(this.dictId, pos, false)
+		descriptor.writeUInt32LE(this.dictId, pos, true)
 		pos += SIZES.DICTID
 	}
 
@@ -5000,20 +5016,21 @@ Encoder.prototype.update_Checksum = function (data) {
 Encoder.prototype.compress_DataBlock = function (data) {
 	this.state = STATES.DATABLOCK_COMPRESS
 	var dbChecksumSize = this.options.blockChecksum ? SIZES.DATABLOCK_CHECKSUM : 0
-	var buf = new Buffer( SIZES.DATABLOCK_SIZE + data.length + dbChecksumSize )
-	var compressed = buf.slice(SIZES.DATABLOCK_SIZE, SIZES.DATABLOCK_SIZE + data.length - 1)
+	var maxBufSize = lz4_binding.compressBound(data.length)
+	var buf = new Buffer( SIZES.DATABLOCK_SIZE + maxBufSize + dbChecksumSize )
+	var compressed = buf.slice(SIZES.DATABLOCK_SIZE, SIZES.DATABLOCK_SIZE + maxBufSize)
 	var compressedSize = this.compress(data, compressed)
 
 	// Set the block size
 	this.state = STATES.DATABLOCK_SIZE
 	if (compressedSize > 0) {
 		// highest bit is 0 (compressed data)
-		buf.writeUInt32LE(compressedSize, 0, false)
+		buf.writeUInt32LE(compressedSize, 0, true)
 		buf = buf.slice(0, SIZES.DATABLOCK_SIZE + compressedSize + dbChecksumSize)
 	} else {
 		// Cannot compress the data, leave it as is
 		// highest bit is 1 (uncompressed data)
-		buf.writeInt32LE( 0x80000000 | data.length, 0, false)
+		buf.writeInt32LE( 0x80000000 | data.length, 0, true)
 		buf = buf.slice(0, SIZES.DATABLOCK_SIZE + data.length + dbChecksumSize)
 		data.copy(buf, SIZES.DATABLOCK_SIZE);
 	}
@@ -5087,7 +5104,7 @@ Encoder.prototype._flush = function (done) {
 	}
 
 	this.state = STATES.EOS
-	eos.writeUInt32LE(lz4_static.EOS, 0, false)
+	eos.writeUInt32LE(lz4_static.EOS, 0, true)
 	this.push(eos)
 
 	done()
@@ -5113,7 +5130,7 @@ module.exports.decode = require('./decoder').LZ4_uncompress
 module.exports.createEncoderStream = require('./encoder_stream')
 module.exports.encode = require('./encoder').LZ4_compress
 
-// Expose chunk decoder and encoders
+// Expose block decoder and encoders
 var bindings = module.exports.utils.bindings
 
 module.exports.decodeBlock = bindings.uncompress
