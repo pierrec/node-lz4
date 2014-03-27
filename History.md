@@ -1,3 +1,8 @@
+0.3.2 / 2014-03-27
+==================
+
+* Fixed Javascript compressBlock() not writing last batch of literals under some circumstances
+
 0.3.1 / 2014-03-18
 ==================
 
