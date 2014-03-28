@@ -4398,16 +4398,20 @@ exports.compress = function (src, dst) {
 		// last 5 bytes must be literals
 		,	srcLength = src.length - lastLiterals
 
+//console.log("src.length", src.length, "srcLength", srcLength, "lastLiterals", lastLiterals)
 		while (pos + minMatch < srcLength) {
+//console.log("pos", pos, "dpos", dpos)
 			// Find a match
 			// min match of 4 bytes aka sequence
 			var sequenceLowBits = src[pos+1]<<8 | src[pos]
 			var sequenceHighBits = src[pos+3]<<8 | src[pos+2]
 			// compute hash for the current sequence
+//console.log("computing hash")
 			var hash = Hash.fromBits(sequenceLowBits, sequenceHighBits)
 							.multiply(hasher)
 							.shiftr(hashShift)
 							.toNumber()
+//console.log("hash", hash)
 			// get the position of the sequence matching the hash
 			// NB. since 2 different sequences may have the same hash
 			// it is double-checked below
@@ -4429,6 +4433,8 @@ exports.compress = function (src, dst) {
 				pos += step
 				continue
 			}
+//console.log("match", src.slice(ref,ref+4), "/", src.slice(pos,pos+4), ref, "/", pos)
+//console.log("anchor", anchor)
 
 			findMatchAttempts = (1 << skipStrength) + 3
 
@@ -4443,12 +4449,15 @@ exports.compress = function (src, dst) {
 			// move to the end of the match (>=minMatch)
 			var match_length = pos
 			while (pos < srcLength && src[pos] == src[ref]) {
+//console.log("match?", ref, pos, src[pos], src[ref])
 				pos++
 				ref++
 			}
 
 			// match length
 			match_length = pos - match_length
+//console.log("match_length", match_length)
+//console.log("literals_length", literals_length)
 
 			// token
 			var token = match_length < mlMask ? match_length : mlMask
@@ -4490,12 +4499,14 @@ exports.compress = function (src, dst) {
 		}
 	}
 
+//console.log(">anchor", anchor)
 	// cannot compress input
 	if (anchor == 0) return 0
 
 	// Write last literals
 	// encode literals length
 	literals_length = src.length - anchor
+//console.log(">literals_length", literals_length)
 	if (literals_length >= runMask) {
 		// add match length to the token
 		dst[dpos++] = (runMask << mlBits)
@@ -4509,6 +4520,8 @@ exports.compress = function (src, dst) {
 	}
 
 	// write literals
+//console.log(">pos / anchor", pos, anchor)
+	pos = anchor
 	while (pos < src.length) {
 		dst[dpos++] = src[pos++]
 	}
@@ -5203,7 +5216,9 @@ exports.SIZES = {
 exports.utils = require('./utils')
 
 }).call(this,require("buffer").Buffer)
-},{"./utils":"uQlS2P","buffer":"xx9DpU"}],"uQlS2P":[function(require,module,exports){
+},{"./utils":"uQlS2P","buffer":"xx9DpU"}],"./utils":[function(require,module,exports){
+module.exports=require('uQlS2P');
+},{}],"uQlS2P":[function(require,module,exports){
 /**
  * Javascript emulated bindings
  */
@@ -5232,9 +5247,7 @@ exports.streamChecksum = function (d, c) {
 
 exports.bindings = require('./binding')
 
-},{"./binding":18,"xxhashjs":31}],"./utils":[function(require,module,exports){
-module.exports=require('uQlS2P');
-},{}],28:[function(require,module,exports){
+},{"./binding":18,"xxhashjs":31}],28:[function(require,module,exports){
 exports.UINT32 = require('./lib/uint32')
 exports.UINT64 = require('./lib/uint64')
 },{"./lib/uint32":29,"./lib/uint64":30}],29:[function(require,module,exports){
