@@ -1,3 +1,9 @@
+0.3.4 / 2014-04-07
+==================
+
+* Updated lz4 source to r116
+* Fixed stream encoder on large inputs
+
 0.3.3 / 2014-03-28
 ==================
 

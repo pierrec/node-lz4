@@ -791,6 +791,7 @@ static unsigned long long decodeLZ4S(FILE* finput, FILE* foutput)
         blockSize = LITTLE_ENDIAN_32(blockSize);   // Convert to little endian
         uncompressedFlag = blockSize >> 31;
         blockSize &= 0x7FFFFFFF;
+        // fprintf(stdout, "%x %d\n", blockSize, blockSize);
         if (blockSize > maxBlockSize) EXM_THROW(72, "Error : invalid block size");
 
         // Read Block
@@ -808,6 +809,7 @@ static unsigned long long decodeLZ4S(FILE* finput, FILE* foutput)
             if (checksum != readChecksum) EXM_THROW(75, "Error : invalid block checksum detected");
         }
 
+// fprintf(stderr, "uncompressedFlag %d block size %d\n", uncompressedFlag, blockSize);
         if (uncompressedFlag)
         {
             // Write uncompressed Block

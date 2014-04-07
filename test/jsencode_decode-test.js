@@ -44,7 +44,7 @@ describe('LZ4 js encoder', function () {
 
   //TODO node v0.10.26 seg faults on this test
   false&&it('should encode/decode data #2', function (done) {
-    var data = "R0lGODlhDAAMAIAAAGZmZv///yH5BAEAAAEALAAAAAAMAAwAAAIYjI8BmbBsHIwPSsXuPbrSj3QRKIrKYl4FADs="
+    var data = new Buffer("R0lGODlhDAAMAIAAAGZmZv///yH5BAEAAAEALAAAAAAMAAwAAAIYjI8BmbBsHIwPSsXuPbrSj3QRKIrKYl4FADs=")
     var maxSize = lz4.compressBound(data.length)
     
     var jsencoded = new Buffer(maxSize)

@@ -30,7 +30,7 @@
    - LZ4 source repository : http://code.google.com/p/lz4/
    - LZ4 public forum : https://groups.google.com/forum/#!forum/lz4c
 */
-
+#include <stdio.h>
 /**************************************
    Tuning parameters
 **************************************/
@@ -369,6 +369,8 @@ FORCE_INLINE int LZ4_NbCommonBytes (register U32 val)
 /****************************
    Compression functions
 ****************************/
+int LZ4_compressBound(int isize)  { return LZ4_COMPRESSBOUND(isize); }
+
 FORCE_INLINE int LZ4_hashSequence(U32 sequence, tableType_t tableType)
 {
     if (tableType == byU16)
@@ -709,7 +711,6 @@ int LZ4_compress_limitedOutput_continue (void* LZ4_Data, const char* source, cha
 /****************************
    Decompression functions
 ****************************/
-
 /*
  * This generic decompression function cover all use cases.
  * It shall be instanciated several times, using different sets of directives
@@ -749,6 +750,7 @@ FORCE_INLINE int LZ4_decompress_generic(
     if ((!endOnInput) && (unlikely(outputSize==0))) return (*ip==0?1:-1);
 
 
+    // fprintf(stdout, "---------------\n");
     /* Main Loop */
     while (1)
     {
@@ -766,21 +768,36 @@ FORCE_INLINE int LZ4_decompress_generic(
                 length += s;
             }
         }
+        // fprintf(stdout, "literals_length %d %d\n", length, (int)((char *)ip-source));
 
         /* copy literals */
         cpy = op+length;
+        // if (length>0) {
         if (((endOnInput) && ((cpy>(partialDecoding?oexit:oend-MFLIMIT)) || (ip+length>iend-(2+1+LASTLITERALS))) )
             || ((!endOnInput) && (cpy>oend-COPYLENGTH)))
         {
             if (partialDecoding)
             {
-                if (cpy > oend) goto _output_error;                           /* Error : write attempt beyond end of output buffer */
-                if ((endOnInput) && (ip+length > iend)) goto _output_error;   /* Error : read attempt beyond end of input buffer */
+                if (cpy > oend) {
+                  // fprintf(stderr, "write attempt beyond end of output buffer\n");
+                goto _output_error;                           /* Error : write attempt beyond end of output buffer */
+                }
+                if ((endOnInput) && (ip+length > iend)) {
+                  // fprintf(stderr, "read attempt beyond end of input buffer\n");
+                goto _output_error;   /* Error : read attempt beyond end of input buffer */
+                }
             }
             else
             {
-                if ((!endOnInput) && (cpy != oend)) goto _output_error;       /* Error : block decoding must stop exactly there */
-                if ((endOnInput) && ((ip+length != iend) || (cpy > oend))) goto _output_error;   /* Error : input must be consumed */
+                if ((!endOnInput) && (cpy != oend)) {
+                  // fprintf(stderr, "block decoding must stop exactly there\n");
+                goto _output_error;       /* Error : block decoding must stop exactly there */
+                   }
+                if ((endOnInput) && ((ip+length != iend) || (cpy > oend))) {
+                  // fprintf(stderr, "input must be consumed: %d %d %d %d %d\n", token, length, inputSize, ((char *)cpy-dest), outputSize);
+                  // fprintf(stderr, "input must be consumed: %d %d %d %d\n", (int)(cpy-oend+MFLIMIT), (int)(ip-iend+2+1+LASTLITERALS), (int)(ip+length-iend), (int)(cpy -oend));
+                goto _output_error;   /* Error : input must be consumed */
+                }
             }
             memcpy(op, ip, length);
             ip += length;
@@ -788,10 +805,14 @@ FORCE_INLINE int LZ4_decompress_generic(
             break;                                       /* Necessarily EOF, due to parsing restrictions */
         }
         LZ4_WILDCOPY(op, ip, cpy); ip -= (op-cpy); op = cpy;
+      // }
 
         /* get offset */
         LZ4_READ_LITTLEENDIAN_16(ref,cpy,ip); ip+=2;
-        if ((prefix64k==noPrefix) && (unlikely(ref < (BYTE* const)dest))) goto _output_error;   /* Error : offset outside destination buffer */
+        if ((prefix64k==noPrefix) && (unlikely(ref < (BYTE* const)dest))) {
+                            // fprintf(stderr, "offset outside destination buffer\n");
+        goto _output_error;   /* Error : offset outside destination buffer */
+        }
 
         /* get matchlength */
         if ((length=(token&ML_MASK)) == ML_MASK)
@@ -804,6 +825,7 @@ FORCE_INLINE int LZ4_decompress_generic(
                 break;
             }
         }
+        // fprintf(stdout, "match_length %d %d\n", length, (int)((char *)ip-source));
 
         /* copy repeated sequence */
         if (unlikely((op-ref)<(int)STEPSIZE))
@@ -824,7 +846,10 @@ FORCE_INLINE int LZ4_decompress_generic(
 
         if (unlikely(cpy>oend-COPYLENGTH-(STEPSIZE-4)))
         {
-            if (cpy > oend-LASTLITERALS) goto _output_error;    /* Error : last 5 bytes must be literals */
+            if (cpy > oend-LASTLITERALS) {
+              // fprintf(stderr, "last 5 bytes must be literals\n");
+            goto _output_error;    /* Error : last 5 bytes must be literals */
+            }
             LZ4_SECURECOPY(op, ref, (oend-COPYLENGTH));
             while(op<cpy) *op++=*ref++;
             op=cpy;
@@ -842,6 +867,7 @@ FORCE_INLINE int LZ4_decompress_generic(
 
     /* Overflow error detected */
 _output_error:
+// fprintf(stderr, "%d", (int)((char*)ip-source));
     return (int) (-(((char*)ip)-source))-1;
 }
 
@@ -875,3 +901,5 @@ int LZ4_decompress_fast(const char* source, char* dest, int outputSize)
 #endif
 }
 
+int LZ4_uncompress (const char* source, char* dest, int outputSize) { return LZ4_decompress_fast(source, dest, outputSize); }
+int LZ4_uncompress_unknownOutputSize (const char* source, char* dest, int isize, int maxOutputSize) { return LZ4_decompress_safe(source, dest, isize, maxOutputSize); }

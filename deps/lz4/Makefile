@@ -30,11 +30,16 @@
 #  - LZ4 forum froup : https://groups.google.com/forum/#!forum/lz4c
 # ################################################################
 
-RELEASE=r113
+export RELEASE=r116
+LIBVER_MAJOR=1
+LIBVER_MINOR=0
+LIBVER_PATCH=0
+LIBVER=$(LIBVER_MAJOR).$(LIBVER_MINOR).$(LIBVER_PATCH)
+
 DESTDIR=
 PREFIX=/usr
-CC=gcc
-CFLAGS+= -I. -std=c99 -Wall -W -Wundef -DLZ4_VERSION=\"$(RELEASE)\"
+CC:=$(CC)
+CFLAGS+= -I. -std=c99 -O3 -Wall -W -Wundef -DLZ4_VERSION=\"$(RELEASE)\"
 
 LIBDIR=$(PREFIX)/lib
 INCLUDEDIR=$(PREFIX)/include
@@ -47,6 +52,20 @@ ifneq (,$(filter Windows%,$(OS)))
 EXT =.exe
 else
 EXT =
+endif
+
+# OS X linker doesn't support -soname, and use different extension
+# see : https://developer.apple.com/library/mac/documentation/DeveloperTools/Conceptual/DynamicLibraries/100-Articles/DynamicLibraryDesignGuidelines.html
+ifeq ($(shell uname), Darwin)
+	SONAME_FLAGS =
+	SHARED_EXT = dylib
+	SHARED_EXT_MAJOR = $(LIBVER_MAJOR).$(SHARED_EXT)
+	SHARED_EXT_VER = $(LIBVER).$(SHARED_EXT)
+else
+	SONAME_FLAGS = -Wl,-soname=liblz4.$(SHARED_EXT).$(LIBVER_MAJOR)
+	SHARED_EXT = so
+	SHARED_EXT_MAJOR = $(SHARED_EXT).$(LIBVER_MAJOR)
+	SHARED_EXT_VER = $(SHARED_EXT).$(LIBVER)
 endif
 
 TEXT = lz4.c lz4.h lz4hc.c lz4hc.h \
@@ -62,47 +81,52 @@ SOURCES = $(TEXT) $(NONTEXT)
 
 
 default: liblz4
-	@cd $(PRGDIR); make
+	@cd $(PRGDIR); $(MAKE) -e
 
 all: liblz4 lz4programs
 
-liblz4: liblz4.a liblz4.so
-
 lz4programs: lz4.c lz4hc.c
-	@cd $(PRGDIR); make all
+	@cd $(PRGDIR); $(MAKE) -e all
 
-liblz4.a: lz4.c lz4hc.c
-	$(CC) -O3 -c $(CFLAGS) $^
-	ar rcs liblz4.a lz4.o lz4hc.o
-
-liblz4.so: lz4.c lz4hc.c
-	$(CC) -shared -fPIC -Wl,--soname=liblz4.so.1 $(CFLAGS) $^ -o $@
+liblz4: lz4.c lz4hc.c
+	@echo compiling static library
+	@$(CC) $(CFLAGS) -c $^
+	@ar rcs liblz4.a lz4.o lz4hc.o
+	@echo compiling dynamic library
+	@$(CC) $(CFLAGS) -shared $^ -fPIC $(SONAME_FLAGS) -o $@.$(SHARED_EXT_VER)
+	@echo creating versioned links
+	@ln -sf $@.$(SHARED_EXT_VER) $@.$(SHARED_EXT_MAJOR)
+	@ln -sf $@.$(SHARED_EXT_VER) $@.$(SHARED_EXT)
 
 clean:
-	@rm -f core *.o *.a *.so $(DISTRIBNAME)
-	@cd $(PRGDIR); make clean
+	@rm -f core *.o *.a *.$(SHARED_EXT) *.$(SHARED_EXT).* $(DISTRIBNAME) *.sha1
+	@cd $(PRGDIR); $(MAKE) clean
 	@echo Cleaning completed
 
 
-#ifeq ($(shell uname),Linux)
+#make install option is reserved to Linux & OSX targets
 ifneq (,$(filter $(shell uname),Linux Darwin))
 
 install: liblz4
 	@install -d -m 755 $(DESTDIR)$(LIBDIR)/ $(DESTDIR)$(INCLUDEDIR)/
 	@install -m 755 liblz4.a $(DESTDIR)$(LIBDIR)/liblz4.a
-	@install -m 755 liblz4.so $(DESTDIR)$(LIBDIR)/liblz4.so
+	@install -m 755 liblz4.$(SHARED_EXT_VER) $(DESTDIR)$(LIBDIR)/liblz4.$(SHARED_EXT_VER)
+	@cp -a liblz4.$(SHARED_EXT_MAJOR) $(DESTDIR)$(LIBDIR)
+	@cp -a liblz4.$(SHARED_EXT) $(DESTDIR)$(LIBDIR)
 	@install -m 755 lz4.h $(DESTDIR)$(INCLUDEDIR)/lz4.h
 	@install -m 755 lz4hc.h $(DESTDIR)$(INCLUDEDIR)/lz4hc.h
 	@echo lz4 static and shared library installed
-	@cd $(PRGDIR); make install
+	@cd $(PRGDIR); $(MAKE) -e install
 
 uninstall:
 	[ -x $(DESTDIR)$(LIBDIR)/liblz4.a ] && rm -f $(DESTDIR)$(LIBDIR)/liblz4.a
-	[ -x $(DESTDIR)$(LIBDIR)/liblz4.so ] && rm -f $(DESTDIR)$(LIBDIR)/liblz4.so
+	rm -f $(DESTDIR)$(LIBDIR)/liblz4.$(SHARED_EXT)
+	rm -f $(DESTDIR)$(LIBDIR)/liblz4.$(SHARED_EXT_MAJOR)
+	[ -x $(DESTDIR)$(LIBDIR)/liblz4.$(SHARED_EXT_VER) ] && rm -f $(DESTDIR)$(LIBDIR)/liblz4.$(SHARED_EXT_VER)
 	[ -f $(DESTDIR)$(INCLUDEDIR)/lz4.h ] && rm -f $(DESTDIR)$(INCLUDEDIR)/lz4.h
 	[ -f $(DESTDIR)$(INCLUDEDIR)/lz4hc.h ] && rm -f $(DESTDIR)$(INCLUDEDIR)/lz4hc.h
 	@echo lz4 libraries successfully uninstalled
-	@cd $(PRGDIR); make uninstall
+	@cd $(PRGDIR); $(MAKE) uninstall
 
 dist: clean
 	@install -dD -m 700 lz4-$(RELEASE)/programs/
@@ -117,6 +141,7 @@ dist: clean
 	done
 	@tar -czf $(DISTRIBNAME) lz4-$(RELEASE)/
 	@rm -rf lz4-$(RELEASE)
+	@sha1sum $(DISTRIBNAME) > $(DISTRIBNAME).sha1
 	@echo Distribution $(DISTRIBNAME) built
 
 endif
