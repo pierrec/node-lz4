@@ -41,6 +41,6 @@
   },
   "scripts": {
     "test": "mocha",
-    "install": "node-gyp rebuild"
+    "install": "node-gyp rebuild; ./build.sh"
   }
 }
