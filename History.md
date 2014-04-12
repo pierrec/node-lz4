@@ -1,3 +1,8 @@
+0.3.6 / 2014-04-11
+==================
+
+* Added useJS option to encoder and decoder streams
+
 0.3.5 / 2014-04-11
 ==================
 
