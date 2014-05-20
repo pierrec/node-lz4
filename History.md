@@ -1,3 +1,8 @@
+0.3.7 / 2014-05-20
+==================
+
+* Fixed assert() when writing uncompressible data
+
 0.3.6 / 2014-04-11
 ==================
 

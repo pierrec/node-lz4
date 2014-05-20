@@ -10,7 +10,7 @@
     "decompression",
     "stream"
   ],
-  "version": "0.3.6",
+  "version": "0.3.7",
   "homepage": "http://github.com/pierrec/node-lz4",
   "repository": {
     "type": "git",
@@ -41,6 +41,7 @@
   },
   "scripts": {
     "test": "mocha",
-    "install": "node-gyp rebuild; ./build.sh"
+    "install": "node-gyp rebuild",
+    "prepublish": "./build.sh"
   }
 }

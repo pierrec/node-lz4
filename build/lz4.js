@@ -1,973 +1,6 @@
-require=(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);throw new Error("Cannot find module '"+o+"'")}var f=n[o]={exports:{}};t[o][0].call(f.exports,function(e){var n=t[o][1][e];return s(n?n:e)},f,f.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
-/**
-	Javascript version of the key LZ4 C functions
- */
-var uint32 = require('cuint').UINT32
-
-/**
- * Decode a block. Assumptions: input contains all sequences of a 
- * chunk, output is large enough to receive the decoded data.
- * If the output buffer is too small, an error will be thrown.
- * If the returned value is negative, an error occured at the returned offset.
- *
- * @param input {Buffer} input data
- * @param output {Buffer} output data
- * @return {Number} number of decoded bytes
- * @private
- */
-exports.uncompress = function (input, output) {
-	// Process each sequence in the incoming data
-	for (var i = 0, n = input.length, j = 0; i < n;) {
-		var token = input[i++]
-
-		// Literals
-		var literals_length = (token >> 4)
-		if (literals_length > 0) {
-			// length of literals
-			var l = literals_length + 240
-			while (l === 255) {
-				l = input[i++]
-				literals_length += l
-			}
-
-			// Copy the literals
-			var end = i + literals_length
-			while (i < end) output[j++] = input[i++]
-
-			// End of buffer?
-			if (i === n) return j
-		}
-
-		// Match copy
-		// 2 bytes offset (little endian)
-		var offset = input[i++] | (input[i++] << 8)
-
-		// 0 is an invalid offset value
-		if (offset === 0 || offset > j) return -(i-2)
-
-		// length of match copy
-		var match_length = (token & 0xf)
-		var l = match_length + 240
-		while (l === 255) {
-			l = input[i++]
-			match_length += l
-		}
-
-		// Copy the match
-		var pos = j - offset // position of the match copy in the current output
-		var end = j + match_length + 4 // minmatch = 4
-		while (j < end) output[j++] = output[pos++]
-	}
-
-	return j
-}
-
-var
-	maxInputSize	= 0x7E000000
-,	minMatch		= 4
-// uint32() optimization
-,	hashLog			= 16
-,	hashShift		= (minMatch * 8) - hashLog
-,	hashSize		= 1 << hashLog
-
-,	copyLength		= 8
-,	lastLiterals	= 5
-,	mfLimit			= copyLength + minMatch
-,	skipStrength	= 6
-
-,	mlBits  		= 4
-,	mlMask  		= (1 << mlBits) - 1
-,	runBits 		= 8 - mlBits
-,	runMask 		= (1 << runBits) - 1
-
-,	hasher 			= uint32(2654435761)
-
-// CompressBound returns the maximum length of a lz4 block, given it's uncompressed length
-exports.compressBound = function (isize) {
-	return isize > maxInputSize
-		? 0
-		: (isize + (isize/255) + 16) | 0
-}
-
-exports.compressHC = exports.compress
-
-exports.compress = function (src, dst) {
-	// V8 optimization: non sparse array with integers
-	var hashTable = new Array(hashSize)
-	for (var i = 0; i < hashSize; i++) {
-		hashTable[i] = 0
-	}
-	return compressBlock(src, dst, 0, hashTable)
-}
-
-exports.compressDependent = compressBlock
-
-function compressBlock (src, dst, pos, hashTable) {
-	var Hash = uint32() // Reusable unsigned 32 bits integer
-	var dpos = 0
-	var anchor = 0
-
-	if (src.length >= maxInputSize) throw new Error("input too large")
-
-	// Minimum of input bytes for compression (LZ4 specs)
-	if (src.length > mfLimit) {
-		var n = exports.compressBound(src.length)
-		if ( dst.length < n ) throw Error("output too small: " + dst.length + " < " + n)
-
-		var 
-			step  = 1
-		,	findMatchAttempts = (1 << skipStrength) + 3
-		// Keep last few bytes incompressible (LZ4 specs):
-		// last 5 bytes must be literals
-		,	srcLength = src.length - mfLimit
-
-		while (pos + minMatch < srcLength) {
-			// Find a match
-			// min match of 4 bytes aka sequence
-			var sequenceLowBits = src[pos+1]<<8 | src[pos]
-			var sequenceHighBits = src[pos+3]<<8 | src[pos+2]
-			// compute hash for the current sequence
-			var hash = Hash.fromBits(sequenceLowBits, sequenceHighBits)
-							.multiply(hasher)
-							.shiftr(hashShift)
-							.toNumber()
-			// get the position of the sequence matching the hash
-			// NB. since 2 different sequences may have the same hash
-			// it is double-checked below
-			// do -1 to distinguish between initialized and uninitialized values
-			var ref = hashTable[hash] - 1
-			// save position of current sequence in hash table
-			hashTable[hash] = pos + 1
-
-			// first reference or within 64k limit or current sequence !== hashed one: no match
-			if ( ref < 0 ||
-				((pos - ref) >>> 16) > 0 ||
-				(
-					((src[ref+3]<<8 | src[ref+2]) != sequenceHighBits) &&
-					((src[ref+1]<<8 | src[ref]) != sequenceLowBits )
-				)
-			) {
-				// increase step if nothing found within limit
-				step = findMatchAttempts++ >> skipStrength
-				pos += step
-				continue
-			}
-
-			findMatchAttempts = (1 << skipStrength) + 3
-
-			// got a match
-			var literals_length = pos - anchor
-			var offset = pos - ref
-
-			// minMatch already verified
-			pos += minMatch
-			ref += minMatch
-
-			// move to the end of the match (>=minMatch)
-			var match_length = pos
-			while (pos < srcLength && src[pos] == src[ref]) {
-				pos++
-				ref++
-			}
-
-			// match length
-			match_length = pos - match_length
-
-			// token
-			var token = match_length < mlMask ? match_length : mlMask
-
-			// encode literals length
-			if (literals_length >= runMask) {
-				// add match length to the token
-				dst[dpos++] = (runMask << mlBits) + token
-				for (var len = literals_length - runMask; len > 254; len -= 255) {
-					dst[dpos++] = 255
-				}
-				dst[dpos++] = len
-			} else {
-				// add match length to the token
-				dst[dpos++] = (literals_length << mlBits) + token
-			}
-
-			// write literals
-			for (var i = 0; i < literals_length; i++) {
-				dst[dpos++] = src[anchor+i]
-			}
-
-			// encode offset
-			dst[dpos++] = offset
-			dst[dpos++] = (offset >> 8)
-
-			// encode match length
-			if (match_length >= mlMask) {
-				match_length -= mlMask
-				while (match_length >= 255) {
-					match_length -= 255
-					dst[dpos++] = 255
-				}
-
-				dst[dpos++] = match_length
-			}
-
-			anchor = pos
-		}
-	}
-
-	// cannot compress input
-	if (anchor == 0) return 0
-
-	// Write last literals
-	// encode literals length
-	literals_length = src.length - anchor
-	if (literals_length >= runMask) {
-		// add match length to the token
-		dst[dpos++] = (runMask << mlBits)
-		for (var ln = literals_length - runMask; ln > 254; ln -= 255) {
-			dst[dpos++] = 255
-		}
-		dst[dpos++] = ln
-	} else {
-		// add match length to the token
-		dst[dpos++] = (literals_length << mlBits)
-	}
-
-	// write literals
-	pos = anchor
-	while (pos < src.length) {
-		dst[dpos++] = src[pos++]
-	}
-
-	return dpos
-}
-
-},{"cuint":28}],2:[function(require,module,exports){
-(function (Buffer){
-var Decoder = require('./decoder_stream')
-
-/**
-	Decode an LZ4 stream
- */
-function LZ4_uncompress (input, options) {
-	var output = []
-	var decoder = new Decoder(options)
-
-	decoder.on('data', function (chunk) {
-		output.push(chunk)
-	})
-
-	decoder.end(input)
-
-	return Buffer.concat(output)
-}
-
-exports.LZ4_uncompress = LZ4_uncompress
-}).call(this,require("buffer").Buffer)
-},{"./decoder_stream":3,"buffer":"cTGqya"}],3:[function(require,module,exports){
-(function (Buffer){
-var Transform = require('stream').Transform
-var inherits = require('util').inherits
-
-var lz4_static = require('./static')
-var utils = lz4_static.utils
-var lz4_binding = utils.bindings
-var lz4_jsbinding = require('./binding')
-
-var STATES = lz4_static.STATES
-var SIZES = lz4_static.SIZES
-
-function Decoder (options) {
-	if ( !(this instanceof Decoder) )
-		return new Decoder(options)
-	
-	Transform.call(this, options)
-	// Options
-	this.options = options || {}
-
-	this.binding = this.options.useJS ? lz4_jsbinding : lz4_binding
-
-	// Encoded data being processed
-	this.buffer = null
-	// Current position within the data
-	this.pos = 0
-	this.descriptor = null
-
-	// Current state of the parsing
-	this.state = STATES.MAGIC
-
-	this.notEnoughData = false
-	this.descriptorStart = 0
-	this.streamSize = null
-	this.dictId = null
-	this.currentStreamChecksum = null
-	this.dataBlockSize = 0
-	this.skippableSize = 0
-}
-inherits(Decoder, Transform)
-
-Decoder.prototype._transform = function (data, encoding, done) {
-	// Handle skippable data
-	if (this.skippableSize > 0) {
-		this.skippableSize -= data.length
-		if (this.skippableSize > 0) {
-			// More to skip
-			done()
-			return
-		}
-
-		data = data.slice(-this.skippableSize)
-		this.skippableSize = 0
-		this.state = STATES.MAGIC
-	}
-	// Buffer the incoming data
-	this.buffer = this.buffer
-					? Buffer.concat( [ this.buffer, data ], this.buffer.length + data.length )
-					: data
-
-	this._main(done)
-}
-
-Decoder.prototype.emit_Error = function (msg) {
-	this.emit( 'error', new Error(msg + ' @' + this.pos) )
-}
-
-Decoder.prototype.check_Size = function (n) {
-	var delta = this.buffer.length - this.pos
-	if (delta <= 0 || delta < n) {
-		if (this.notEnoughData) this.emit_Error( 'Unexpected end of LZ4 stream' )
-		return true
-	}
-
-	this.pos += n
-	return false
-}
-
-Decoder.prototype.read_MagicNumber = function () {
-	var pos = this.pos
-	if ( this.check_Size(SIZES.MAGIC) ) return true
-
-	var magic = this.buffer.readUInt32LE(pos, true)
-
-	// Skippable chunk
-	if ( (magic & 0xFFFFFFF0) === lz4_static.MAGICNUMBER_SKIPPABLE ) {
-		this.state = STATES.SKIP_SIZE
-		return
-	}
-
-	// LZ4 stream
-	if ( magic !== lz4_static.MAGICNUMBER ) {
-		this.pos = pos
-		this.emit_Error( 'Invalid magic number: ' + magic.toString(16).toUpperCase() )
-		return true
-	}
-
-	this.state = STATES.DESCRIPTOR
-}
-
-Decoder.prototype.read_SkippableSize = function () {
-	var pos = this.pos
-	if ( this.check_Size(SIZES.SKIP_SIZE) ) return true
-	this.state = STATES.SKIP_DATA
-	this.skippableSize = this.buffer.readUInt32LE(pos, true)
-}
-
-Decoder.prototype.read_Descriptor = function () {
-	// Flags
-	var pos = this.pos
-	if ( this.check_Size(SIZES.DESCRIPTOR) ) return true
-
-	this.descriptorStart = pos
-
-	// version
-	var descriptor_flg = this.buffer[pos]
-	var version = descriptor_flg >> 6
-	if ( version !== lz4_static.VERSION ) {
-		this.pos = pos
-		this.emit_Error( 'Invalid version: ' + version + ' != ' + lz4_static.VERSION )
-		return true
-	}
-
-	// flags
-	// reserved bit should not be set
-	if ( (descriptor_flg >> 1) & 0x1 ) {
-		this.pos = pos
-		this.emit_Error('Reserved bit set')
-		return true
-	}
-
-	var blockMaxSizeIndex = (this.buffer[pos+1] >> 4) & 0x7
-	var blockMaxSize = lz4_static.blockMaxSizes[ blockMaxSizeIndex ]
-	if ( blockMaxSize === null ) {
-		this.pos = pos
-		this.emit_Error( 'Invalid block max size: ' + blockMaxSizeIndex )
-		return true
-	}
-
-	this.descriptor = {
-		blockIndependence: Boolean( (descriptor_flg >> 5) & 0x1 )
-	,	blockChecksum: Boolean( (descriptor_flg >> 4) & 0x1 )
-	,	blockMaxSize: blockMaxSize
-	,	streamSize: Boolean( (descriptor_flg >> 3) & 0x1 )
-	,	streamChecksum: Boolean( (descriptor_flg >> 2) & 0x1 )
-	,	dict: Boolean( descriptor_flg & 0x1 )
-	,	dictId: 0
-	}
-
-	this.state = STATES.SIZE
-}
-
-Decoder.prototype.read_Size = function () {
-	if (this.descriptor.streamSize) {
-		var pos = this.pos
-		if ( this.check_Size(SIZES.SIZE) ) return true
-		//TODO max size is unsigned 64 bits
-		this.streamSize = this.buffer.slice(pos, pos + 8)
-	}
-
-	this.state = STATES.DICTID
-}
-
-Decoder.prototype.read_DictId = function () {
-	if (this.descriptor.dictId) {
-		var pos = this.pos
-		if ( this.check_Size(SIZES.DICTID) ) return true
-		this.dictId = this.buffer.readUInt32LE(pos, true)
-	}
-
-	this.state = STATES.DESCRIPTOR_CHECKSUM
-}
-
-Decoder.prototype.read_DescriptorChecksum = function () {
-	var pos = this.pos
-	if ( this.check_Size(SIZES.DESCRIPTOR_CHECKSUM) ) return true
-
-	var checksum = this.buffer[pos]
-	var currentChecksum = utils.descriptorChecksum( this.buffer.slice(this.descriptorStart, pos) )
-	if (currentChecksum !== checksum) {
-		this.pos = pos
-		this.emit_Error( 'Invalid stream descriptor checksum' )
-		return true
-	}
-
-	this.state = STATES.DATABLOCK_SIZE
-}
-
-Decoder.prototype.read_DataBlockSize = function () {
-	var pos = this.pos
-	if ( this.check_Size(SIZES.DATABLOCK_SIZE) ) return true
-	var datablock_size = this.buffer.readUInt32LE(pos, true)
-	// Uncompressed
-	if ( datablock_size === lz4_static.EOS ) {
-		this.state = STATES.EOS
-		return
-	}
-
-// if (datablock_size > this.descriptor.blockMaxSize) {
-// 	this.emit_Error( 'ASSERTION: invalid datablock_size: ' + datablock_size.toString(16).toUpperCase() + ' > ' + this.descriptor.blockMaxSize.toString(16).toUpperCase() )
-// }
-	this.dataBlockSize = datablock_size
-
-	this.state = STATES.DATABLOCK_DATA
-}
-
-Decoder.prototype.read_DataBlockData = function () {
-	var pos = this.pos
-	var datablock_size = this.dataBlockSize
-	if ( datablock_size & 0x80000000 ) {
-		// Uncompressed size
-		datablock_size = datablock_size & 0x7FFFFFFF
-	}
-	if ( this.check_Size(datablock_size) ) return true
-
-	this.dataBlock = this.buffer.slice(pos, pos + datablock_size)
-
-	this.state = STATES.DATABLOCK_CHECKSUM
-}
-
-Decoder.prototype.read_DataBlockChecksum = function () {
-	if (this.descriptor.blockChecksum) {
-		if ( this.check_Size(SIZES.DATABLOCK_CHECKSUM) ) return true
-		var checksum = this.buffer.readUInt32LE(this.pos-4, true)
-		var currentChecksum = utils.blockChecksum( this.dataBlock )
-		if (currentChecksum !== checksum) {
-			this.pos = pos
-			this.emit_Error( 'Invalid block checksum' )
-			return true
-		}
-	}
-
-	this.state = STATES.DATABLOCK_UNCOMPRESS
-}
-
-Decoder.prototype.uncompress_DataBlock = function () {
-	var uncompressed
-	// uncompressed?
-	if ( this.dataBlockSize & 0x80000000 ) {
-		uncompressed = this.dataBlock
-	} else {
-		uncompressed = new Buffer(this.descriptor.blockMaxSize)
-		var decodedSize = this.binding.uncompress( this.dataBlock, uncompressed )
-		if (decodedSize < 0) {
-			this.emit_Error( 'Invalid data block: ' + (-decodedSize) )
-			return true
-		}
-		if ( decodedSize < this.descriptor.blockMaxSize )
-			uncompressed = uncompressed.slice(0, decodedSize)
-	}
-	this.dataBlock = null
-	this.push( uncompressed )
-
-	// Stream checksum
-	if (this.descriptor.streamChecksum) {
-		this.currentStreamChecksum = utils.streamChecksum(uncompressed, this.currentStreamChecksum)
-	}
-
-	this.state = STATES.DATABLOCK_SIZE
-}
-
-Decoder.prototype.read_EOS = function () {
-	if (this.descriptor.streamChecksum) {
-		var pos = this.pos
-		if ( this.check_Size(SIZES.EOS) ) return true
-		var checksum = this.buffer.readUInt32LE(pos, true)
-		if ( checksum !== utils.streamChecksum(null, this.currentStreamChecksum) ) {
-			this.pos = pos
-			this.emit_Error( 'Invalid stream checksum: ' + checksum.toString(16).toUpperCase() )
-			return true
-		}
-	}
-
-	this.state = STATES.MAGIC
-}
-
-Decoder.prototype._flush = function (done) {
-	// Error on missing data as no more will be coming
-	this.notEnoughData = true
-	this._main(done)
-}
-
-Decoder.prototype._main = function (done) {
-	var pos = this.pos
-	var notEnoughData
-
-	while ( !notEnoughData && this.pos < this.buffer.length ) {
-		if (this.state === STATES.MAGIC)
-			notEnoughData = this.read_MagicNumber()
-
-		if (this.state === STATES.SKIP_SIZE)
-			notEnoughData = this.read_SkippableSize()
-
-		if (this.state === STATES.DESCRIPTOR)
-			notEnoughData = this.read_Descriptor()
-
-		if (this.state === STATES.SIZE)
-			notEnoughData = this.read_Size()
-
-		if (this.state === STATES.DICTID)
-			notEnoughData = this.read_DictId()
-
-		if (this.state === STATES.DESCRIPTOR_CHECKSUM)
-			notEnoughData = this.read_DescriptorChecksum()
-
-		if (this.state === STATES.DATABLOCK_SIZE)
-			notEnoughData = this.read_DataBlockSize()
-
-		if (this.state === STATES.DATABLOCK_DATA)
-			notEnoughData = this.read_DataBlockData()
-
-		if (this.state === STATES.DATABLOCK_CHECKSUM)
-			notEnoughData = this.read_DataBlockChecksum()
-
-		if (this.state === STATES.DATABLOCK_UNCOMPRESS)
-			notEnoughData = this.uncompress_DataBlock()
-
-		if (this.state === STATES.EOS)
-			notEnoughData = this.read_EOS()
-	}
-
-	if (this.pos > pos) {
-		this.buffer = this.buffer.slice(this.pos)
-		this.pos = 0
-	}
-
-	done()
-}
-
-module.exports = Decoder
-
-}).call(this,require("buffer").Buffer)
-},{"./binding":1,"./static":8,"buffer":"cTGqya","stream":19,"util":27}],4:[function(require,module,exports){
-(function (Buffer){
-var Encoder = require('./encoder_stream')
-
-/**
-	Encode an LZ4 stream
- */
-function LZ4_compress (input, options) {
-	var output = []
-	var encoder = new Encoder(options)
-
-	encoder.on('data', function (chunk) {
-		output.push(chunk)
-	})
-
-	encoder.end(input)
-
-	return Buffer.concat(output)
-}
-
-exports.LZ4_compress = LZ4_compress
-
-}).call(this,require("buffer").Buffer)
-},{"./encoder_stream":5,"buffer":"cTGqya"}],5:[function(require,module,exports){
-(function (Buffer){
-var Transform = require('stream').Transform
-var inherits = require('util').inherits
-
-var lz4_static = require('./static')
-var utils = lz4_static.utils
-var lz4_binding = utils.bindings
-var lz4_jsbinding = require('./binding')
-
-var STATES = lz4_static.STATES
-var SIZES = lz4_static.SIZES
-
-var defaultOptions = {
-	blockIndependence: true
-,	blockChecksum: false
-,	blockMaxSize: 4<<20
-,	streamSize: false
-,	streamChecksum: true
-,	dict: false
-,	dictId: 0
-,	highCompression: false
-}
-
-function Encoder (options) {
-	if ( !(this instanceof Encoder) )
-		return new Encoder(options)
-	
-	Transform.call(this, options)
-
-	// Set the options
-	var o = options || defaultOptions
-	if (o !== defaultOptions)
-		Object.keys(defaultOptions).forEach(function (p) {
-			if ( !o.hasOwnProperty(p) ) o[p] = defaultOptions[p]
-		})
-
-	this.options = o
-
-	this.binding = this.options.useJS ? lz4_jsbinding : lz4_binding
-	this.compress = o.highCompression ? this.binding.compressHC : this.binding.compress
-
-	// Build the stream descriptor from the options
-	// flags
-	var descriptor_flg = 0
-	descriptor_flg = descriptor_flg | (lz4_static.VERSION << 6)			// Version
-	descriptor_flg = descriptor_flg | ((o.blockIndependence & 1) << 5)	// Block independence
-	descriptor_flg = descriptor_flg | ((o.blockChecksum & 1) << 4)		// Block checksum
-	descriptor_flg = descriptor_flg | ((o.streamSize & 1) << 3)			// Stream size
-	descriptor_flg = descriptor_flg | ((o.streamChecksum & 1) << 2)		// Stream checksum
-																		// Reserved bit
-	descriptor_flg = descriptor_flg | (o.dict & 1)						// Preset dictionary
-
-	// block maximum size
-	var descriptor_bd = lz4_static.blockMaxSizes.indexOf(o.blockMaxSize)
-	if (descriptor_bd < 0)
-		throw new Error('Invalid blockMaxSize: ' + o.blockMaxSize)
-
-	this.descriptor = { flg: descriptor_flg, bd: (descriptor_bd & 0x7) << 4 }
-
-	// Data being processed
-	this.buffer = []
-	this.length = 0
-
-	this.first = true
-	this.checksum = null
-}
-inherits(Encoder, Transform)
-
-// Header = magic number + stream descriptor
-Encoder.prototype.headerSize = function () {
-	var streamSizeSize = this.options.streamSize ? SIZES.DESCRIPTOR : 0
-	var dictSize = this.options.dict ? SIZES.DICTID : 0
-
-	return SIZES.MAGIC + 1 + 1 + streamSizeSize + dictSize + 1
-}
-
-Encoder.prototype.header = function () {
-	var headerSize = this.headerSize()
-	var output = new Buffer(headerSize)
-
-	this.state = STATES.MAGIC
-	output.writeUInt32LE(lz4_static.MAGICNUMBER, 0, true)
-
-	this.state = STATES.DESCRIPTOR
-	var descriptor = output.slice(SIZES.MAGIC, output.length - 1)
-
-	// Update the stream descriptor
-	descriptor.writeUInt8(this.descriptor.flg, 0, true)
-	descriptor.writeUInt8(this.descriptor.bd, 1, true)
-
-	var pos = 2
-	this.state = STATES.SIZE
-	if (this.options.streamSize) {
-		//TODO only 32bits size supported
-		descriptor.writeUInt32LE(0, pos, true)
-		descriptor.writeUInt32LE(this.size, pos + 4, true)
-		pos += SIZES.SIZE
-	}
-	this.state = STATES.DICTID
-	if (this.options.dict) {
-		descriptor.writeUInt32LE(this.dictId, pos, true)
-		pos += SIZES.DICTID
-	}
-
-	this.state = STATES.DESCRIPTOR_CHECKSUM
-	output.writeUInt8(
-	  utils.descriptorChecksum( descriptor )
-	, SIZES.MAGIC + pos, false
-	)
-
-	return output
-}
-
-Encoder.prototype.update_Checksum = function (data) {
-	// Calculate the stream checksum
-	this.state = STATES.CHECKSUM_UPDATE
-	if (this.options.streamChecksum) {
-		this.checksum = utils.streamChecksum(data, this.checksum)
-	}
-}
-
-Encoder.prototype.compress_DataBlock = function (data) {
-	this.state = STATES.DATABLOCK_COMPRESS
-	var dbChecksumSize = this.options.blockChecksum ? SIZES.DATABLOCK_CHECKSUM : 0
-	var maxBufSize = this.binding.compressBound(data.length)
-	var buf = new Buffer( SIZES.DATABLOCK_SIZE + maxBufSize + dbChecksumSize )
-	var compressed = buf.slice(SIZES.DATABLOCK_SIZE, SIZES.DATABLOCK_SIZE + maxBufSize)
-	var compressedSize = this.compress(data, compressed)
-
-	// Set the block size
-	this.state = STATES.DATABLOCK_SIZE
-	// Block size shall never be larger than blockMaxSize
-	// console.log("blockMaxSize", this.options.blockMaxSize, "compressedSize", compressedSize)
-	if (compressedSize > 0 && compressedSize <= this.options.blockMaxSize) {
-		// highest bit is 0 (compressed data)
-		buf.writeUInt32LE(compressedSize, 0, true)
-		buf = buf.slice(0, SIZES.DATABLOCK_SIZE + compressedSize + dbChecksumSize)
-	} else {
-		// Cannot compress the data, leave it as is
-		// highest bit is 1 (uncompressed data)
-		buf.writeUInt32LE( 0x80000000 | data.length, 0, true)
-		buf = buf.slice(0, SIZES.DATABLOCK_SIZE + data.length + dbChecksumSize)
-		data.copy(buf, SIZES.DATABLOCK_SIZE);
-	}
-
-	// Set the block checksum
-	this.state = STATES.DATABLOCK_CHECKSUM
-	if (this.options.blockChecksum) {
-		// xxHash checksum on undecoded data with a seed of 0
-		var checksum = buf.slice(-dbChecksumSize)
-		checksum.writeUInt32LE( utils.blockChecksum(compressed), 0, false )
-	}
-
-	// Update the stream checksum
-	this.update_Checksum(data)
-
-	this.size += data.length
-
-	return buf
-}
-
-Encoder.prototype._transform = function (data, encoding, done) {
-	if (data) {
-		// Buffer the incoming data
-		this.buffer.push(data)
-		this.length += data.length
-	}
-
-	// Stream header
-	if (this.first) {
-		this.push( this.header() )
-		this.first = false
-	}
-
-	var blockMaxSize = this.options.blockMaxSize
-	// Not enough data for a block
-	if ( this.length < blockMaxSize ) return done()
-
-	// Build the data to be compressed
-	var buf = Buffer.concat(this.buffer, this.length)
-
-	for (var j = 0, i = buf.length; i >= blockMaxSize; i -= blockMaxSize, j += blockMaxSize) {
-		// Compress the block
-		this.push( this.compress_DataBlock( buf.slice(j, j + blockMaxSize) ) )
-	}
-
-	// Set the remaining data
-	if (i > 0) {
-		this.buffer = [ buf.slice(j) ]
-		this.length = this.buffer[0].length
-	} else {
-		this.buffer = []
-		this.length = 0
-	}
-
-	done()
-}
-
-Encoder.prototype._flush = function (done) {
-	if (this.length > 0) {
-		var buf = Buffer.concat(this.buffer, this.length)
-		this.buffer = []
-		this.length = 0
-		var cc = this.compress_DataBlock(buf)
-		this.push( cc )
-	}
-
-	if (this.options.streamChecksum) {
-		this.state = STATES.CHECKSUM
-		var eos = new Buffer(SIZES.EOS + SIZES.CHECKSUM)
-		eos.writeUInt32LE( utils.streamChecksum(null, this.checksum), SIZES.EOS, false )
-	} else {
-		var eos = new Buffer(SIZES.EOS)
-	}
-
-	this.state = STATES.EOS
-	eos.writeUInt32LE(lz4_static.EOS, 0, true)
-	this.push(eos)
-
-	done()
-}
-
-module.exports = Encoder
-
-}).call(this,require("buffer").Buffer)
-},{"./binding":1,"./static":8,"buffer":"cTGqya","stream":19,"util":27}],"nlAsow":[function(require,module,exports){
-/**
- * LZ4 based compression and decompression
- * Copyright (c) 2014 Pierre Curto
- * MIT Licensed
- */
-
-module.exports = require('./static')
-
-module.exports.createDecoderStream = require('./decoder_stream')
-module.exports.decode = require('./decoder').LZ4_uncompress
-
-module.exports.createEncoderStream = require('./encoder_stream')
-module.exports.encode = require('./encoder').LZ4_compress
-
-// Expose block decoder and encoders
-var bindings = module.exports.utils.bindings
-
-module.exports.decodeBlock = bindings.uncompress
-
-module.exports.encodeBound = bindings.compressBound
-module.exports.encodeBlock = bindings.compress
-module.exports.encodeBlockHC = bindings.compressHC
-
-},{"./decoder":2,"./decoder_stream":3,"./encoder":4,"./encoder_stream":5,"./static":8}],"lz4":[function(require,module,exports){
-module.exports=require('nlAsow');
-},{}],8:[function(require,module,exports){
-(function (Buffer){
-/**
- * LZ4 based compression and decompression
- * Copyright (c) 2014 Pierre Curto
- * MIT Licensed
- */
-
-// LZ4 stream constants
-exports.MAGICNUMBER = 0x184D2204
-exports.MAGICNUMBER_BUFFER = new Buffer(4)
-exports.MAGICNUMBER_BUFFER.writeUInt32LE(exports.MAGICNUMBER, 0, false)
-
-exports.EOS = 0
-exports.EOS_BUFFER = new Buffer(4)
-exports.EOS_BUFFER.writeUInt32LE(exports.EOS, 0, false)
-
-exports.VERSION = 1
-
-exports.MAGICNUMBER_SKIPPABLE = 0x184D2A50
-
-// n/a, n/a, n/a, n/a, 64KB, 256KB, 1MB, 4MB
-exports.blockMaxSizes = [ null, null, null, null, 64<<10, 256<<10, 1<<20, 4<<20 ]
-
-// Compressed file extension
-exports.extension = '.lz4'
-
-// Internal stream states
-exports.STATES = {
-// Compressed stream
-	MAGIC: 0
-,	DESCRIPTOR: 1
-,	SIZE: 2
-,	DICTID: 3
-,	DESCRIPTOR_CHECKSUM: 4
-,	DATABLOCK_SIZE: 5
-,	DATABLOCK_DATA: 6
-,	DATABLOCK_CHECKSUM: 7
-,	DATABLOCK_UNCOMPRESS: 8
-,	DATABLOCK_COMPRESS: 9
-,	CHECKSUM: 10
-,	CHECKSUM_UPDATE: 11
-,	EOS: 90
-// Skippable chunk
-,	SKIP_SIZE: 101
-,	SKIP_DATA: 102
-}
-
-exports.SIZES = {
-	MAGIC: 4
-,	DESCRIPTOR: 2
-,	SIZE: 8
-,	DICTID: 4
-,	DESCRIPTOR_CHECKSUM: 1
-,	DATABLOCK_SIZE: 4
-,	DATABLOCK_CHECKSUM: 4
-,	CHECKSUM: 4
-,	EOS: 4
-,	SKIP_SIZE: 4
-}
-
-exports.utils = require('./utils')
-
-}).call(this,require("buffer").Buffer)
-},{"./utils":"uQlS2P","buffer":"cTGqya"}],"uQlS2P":[function(require,module,exports){
-/**
- * Javascript emulated bindings
- */
-var XXH = require('xxhashjs')
-
-var CHECKSUM_SEED = 0
-
-// Header checksum is second byte of xxhash using 0 as a seed
-exports.descriptorChecksum = function (d) {
-	return (XXH(d, CHECKSUM_SEED).toNumber() >> 8) & 0xFF
-}
-
-exports.blockChecksum = function (d) {
-	return XXH(d, CHECKSUM_SEED).toNumber()
-}
-
-exports.streamChecksum = function (d, c) {
-	if (d === null)
-		return c.digest().toNumber()
-
-	if (c === null)
-		c = XXH(CHECKSUM_SEED)
-
-	return c.update(d)
-}
-
-exports.bindings = require('./binding')
-
-},{"./binding":1,"xxhashjs":31}],"./utils":[function(require,module,exports){
-module.exports=require('uQlS2P');
-},{}],"buffer":[function(require,module,exports){
-module.exports=require('cTGqya');
-},{}],"cTGqya":[function(require,module,exports){
+require=(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);throw new Error("Cannot find module '"+o+"'")}var f=n[o]={exports:{}};t[o][0].call(f.exports,function(e){var n=t[o][1][e];return s(n?n:e)},f,f.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({"buffer":[function(require,module,exports){
+module.exports=require('xx9DpU');
+},{}],"xx9DpU":[function(require,module,exports){
 /**
  * The buffer module from node.js, for the browser.
  *
@@ -2080,7 +1113,7 @@ function assert (test, message) {
   if (!test) throw new Error(message || 'Failed assertion')
 }
 
-},{"base64-js":13,"ieee754":14}],13:[function(require,module,exports){
+},{"base64-js":3,"ieee754":4}],3:[function(require,module,exports){
 var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 ;(function (exports) {
@@ -2203,7 +1236,7 @@ var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 	module.exports.fromByteArray = uint8ToBase64
 }())
 
-},{}],14:[function(require,module,exports){
+},{}],4:[function(require,module,exports){
 exports.read = function(buffer, offset, isLE, mLen, nBytes) {
   var e, m,
       eLen = nBytes * 8 - mLen - 1,
@@ -2289,7 +1322,7 @@ exports.write = function(buffer, value, offset, isLE, mLen, nBytes) {
   buffer[offset + i - d] |= s * 128;
 };
 
-},{}],15:[function(require,module,exports){
+},{}],5:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -2591,7 +1624,7 @@ function isUndefined(arg) {
   return arg === void 0;
 }
 
-},{}],16:[function(require,module,exports){
+},{}],6:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -2616,7 +1649,7 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],17:[function(require,module,exports){
+},{}],7:[function(require,module,exports){
 // shim for using process in browser
 
 var process = module.exports = {};
@@ -2671,7 +1704,7 @@ process.chdir = function (dir) {
     throw new Error('process.chdir is not supported');
 };
 
-},{}],18:[function(require,module,exports){
+},{}],8:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -2745,7 +1778,7 @@ function onend() {
   });
 }
 
-},{"./readable.js":22,"./writable.js":24,"inherits":16,"process/browser.js":20}],19:[function(require,module,exports){
+},{"./readable.js":12,"./writable.js":14,"inherits":6,"process/browser.js":10}],9:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -2874,9 +1907,9 @@ Stream.prototype.pipe = function(dest, options) {
   return dest;
 };
 
-},{"./duplex.js":18,"./passthrough.js":21,"./readable.js":22,"./transform.js":23,"./writable.js":24,"events":15,"inherits":16}],20:[function(require,module,exports){
-module.exports=require(17)
-},{}],21:[function(require,module,exports){
+},{"./duplex.js":8,"./passthrough.js":11,"./readable.js":12,"./transform.js":13,"./writable.js":14,"events":5,"inherits":6}],10:[function(require,module,exports){
+module.exports=require(7)
+},{}],11:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -2919,7 +1952,7 @@ PassThrough.prototype._transform = function(chunk, encoding, cb) {
   cb(null, chunk);
 };
 
-},{"./transform.js":23,"inherits":16}],22:[function(require,module,exports){
+},{"./transform.js":13,"inherits":6}],12:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -3855,8 +2888,8 @@ function indexOf (xs, x) {
   return -1;
 }
 
-}).call(this,require("/home/pierre/sandbox/git/node-lz4/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"))
-},{"./index.js":19,"/home/pierre/sandbox/git/node-lz4/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":17,"buffer":"cTGqya","events":15,"inherits":16,"process/browser.js":20,"string_decoder":25}],23:[function(require,module,exports){
+}).call(this,require("/home/pierre/lib/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"))
+},{"./index.js":9,"/home/pierre/lib/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":7,"buffer":"xx9DpU","events":5,"inherits":6,"process/browser.js":10,"string_decoder":15}],13:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -4062,7 +3095,7 @@ function done(stream, er) {
   return stream.push(null);
 }
 
-},{"./duplex.js":18,"inherits":16}],24:[function(require,module,exports){
+},{"./duplex.js":8,"inherits":6}],14:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -4450,7 +3483,7 @@ function endWritable(stream, state, cb) {
   state.ended = true;
 }
 
-},{"./index.js":19,"buffer":"cTGqya","inherits":16,"process/browser.js":20}],25:[function(require,module,exports){
+},{"./index.js":9,"buffer":"xx9DpU","inherits":6,"process/browser.js":10}],15:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -4643,14 +3676,14 @@ function base64DetectIncompleteChar(buffer) {
   return incomplete;
 }
 
-},{"buffer":"cTGqya"}],26:[function(require,module,exports){
+},{"buffer":"xx9DpU"}],16:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],27:[function(require,module,exports){
+},{}],17:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -5239,8 +4272,975 @@ function hasOwnProperty(obj, prop) {
   return Object.prototype.hasOwnProperty.call(obj, prop);
 }
 
-}).call(this,require("/home/pierre/sandbox/git/node-lz4/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"),typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":26,"/home/pierre/sandbox/git/node-lz4/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":17,"inherits":16}],28:[function(require,module,exports){
+}).call(this,require("/home/pierre/lib/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"),typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{"./support/isBuffer":16,"/home/pierre/lib/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":7,"inherits":6}],18:[function(require,module,exports){
+/**
+	Javascript version of the key LZ4 C functions
+ */
+var uint32 = require('cuint').UINT32
+
+/**
+ * Decode a block. Assumptions: input contains all sequences of a 
+ * chunk, output is large enough to receive the decoded data.
+ * If the output buffer is too small, an error will be thrown.
+ * If the returned value is negative, an error occured at the returned offset.
+ *
+ * @param input {Buffer} input data
+ * @param output {Buffer} output data
+ * @return {Number} number of decoded bytes
+ * @private
+ */
+exports.uncompress = function (input, output) {
+	// Process each sequence in the incoming data
+	for (var i = 0, n = input.length, j = 0; i < n;) {
+		var token = input[i++]
+
+		// Literals
+		var literals_length = (token >> 4)
+		if (literals_length > 0) {
+			// length of literals
+			var l = literals_length + 240
+			while (l === 255) {
+				l = input[i++]
+				literals_length += l
+			}
+
+			// Copy the literals
+			var end = i + literals_length
+			while (i < end) output[j++] = input[i++]
+
+			// End of buffer?
+			if (i === n) return j
+		}
+
+		// Match copy
+		// 2 bytes offset (little endian)
+		var offset = input[i++] | (input[i++] << 8)
+
+		// 0 is an invalid offset value
+		if (offset === 0 || offset > j) return -(i-2)
+
+		// length of match copy
+		var match_length = (token & 0xf)
+		var l = match_length + 240
+		while (l === 255) {
+			l = input[i++]
+			match_length += l
+		}
+
+		// Copy the match
+		var pos = j - offset // position of the match copy in the current output
+		var end = j + match_length + 4 // minmatch = 4
+		while (j < end) output[j++] = output[pos++]
+	}
+
+	return j
+}
+
+var
+	maxInputSize	= 0x7E000000
+,	minMatch		= 4
+// uint32() optimization
+,	hashLog			= 16
+,	hashShift		= (minMatch * 8) - hashLog
+,	hashSize		= 1 << hashLog
+
+,	copyLength		= 8
+,	lastLiterals	= 5
+,	mfLimit			= copyLength + minMatch
+,	skipStrength	= 6
+
+,	mlBits  		= 4
+,	mlMask  		= (1 << mlBits) - 1
+,	runBits 		= 8 - mlBits
+,	runMask 		= (1 << runBits) - 1
+
+,	hasher 			= uint32(2654435761)
+
+// CompressBound returns the maximum length of a lz4 block, given it's uncompressed length
+exports.compressBound = function (isize) {
+	return isize > maxInputSize
+		? 0
+		: (isize + (isize/255) + 16) | 0
+}
+
+exports.compressHC = exports.compress
+
+exports.compress = function (src, dst) {
+	// V8 optimization: non sparse array with integers
+	var hashTable = new Array(hashSize)
+	for (var i = 0; i < hashSize; i++) {
+		hashTable[i] = 0
+	}
+	return compressBlock(src, dst, 0, hashTable)
+}
+
+exports.compressDependent = compressBlock
+
+function compressBlock (src, dst, pos, hashTable) {
+	var Hash = uint32() // Reusable unsigned 32 bits integer
+	var dpos = 0
+	var anchor = 0
+
+	if (src.length >= maxInputSize) throw new Error("input too large")
+
+	// Minimum of input bytes for compression (LZ4 specs)
+	if (src.length > mfLimit) {
+		var n = exports.compressBound(src.length)
+		if ( dst.length < n ) throw Error("output too small: " + dst.length + " < " + n)
+
+		var 
+			step  = 1
+		,	findMatchAttempts = (1 << skipStrength) + 3
+		// Keep last few bytes incompressible (LZ4 specs):
+		// last 5 bytes must be literals
+		,	srcLength = src.length - mfLimit
+
+		while (pos + minMatch < srcLength) {
+			// Find a match
+			// min match of 4 bytes aka sequence
+			var sequenceLowBits = src[pos+1]<<8 | src[pos]
+			var sequenceHighBits = src[pos+3]<<8 | src[pos+2]
+			// compute hash for the current sequence
+			var hash = Hash.fromBits(sequenceLowBits, sequenceHighBits)
+							.multiply(hasher)
+							.shiftr(hashShift)
+							.toNumber()
+			// get the position of the sequence matching the hash
+			// NB. since 2 different sequences may have the same hash
+			// it is double-checked below
+			// do -1 to distinguish between initialized and uninitialized values
+			var ref = hashTable[hash] - 1
+			// save position of current sequence in hash table
+			hashTable[hash] = pos + 1
+
+			// first reference or within 64k limit or current sequence !== hashed one: no match
+			if ( ref < 0 ||
+				((pos - ref) >>> 16) > 0 ||
+				(
+					((src[ref+3]<<8 | src[ref+2]) != sequenceHighBits) &&
+					((src[ref+1]<<8 | src[ref]) != sequenceLowBits )
+				)
+			) {
+				// increase step if nothing found within limit
+				step = findMatchAttempts++ >> skipStrength
+				pos += step
+				continue
+			}
+
+			findMatchAttempts = (1 << skipStrength) + 3
+
+			// got a match
+			var literals_length = pos - anchor
+			var offset = pos - ref
+
+			// minMatch already verified
+			pos += minMatch
+			ref += minMatch
+
+			// move to the end of the match (>=minMatch)
+			var match_length = pos
+			while (pos < srcLength && src[pos] == src[ref]) {
+				pos++
+				ref++
+			}
+
+			// match length
+			match_length = pos - match_length
+
+			// token
+			var token = match_length < mlMask ? match_length : mlMask
+
+			// encode literals length
+			if (literals_length >= runMask) {
+				// add match length to the token
+				dst[dpos++] = (runMask << mlBits) + token
+				for (var len = literals_length - runMask; len > 254; len -= 255) {
+					dst[dpos++] = 255
+				}
+				dst[dpos++] = len
+			} else {
+				// add match length to the token
+				dst[dpos++] = (literals_length << mlBits) + token
+			}
+
+			// write literals
+			for (var i = 0; i < literals_length; i++) {
+				dst[dpos++] = src[anchor+i]
+			}
+
+			// encode offset
+			dst[dpos++] = offset
+			dst[dpos++] = (offset >> 8)
+
+			// encode match length
+			if (match_length >= mlMask) {
+				match_length -= mlMask
+				while (match_length >= 255) {
+					match_length -= 255
+					dst[dpos++] = 255
+				}
+
+				dst[dpos++] = match_length
+			}
+
+			anchor = pos
+		}
+	}
+
+	// cannot compress input
+	if (anchor == 0) return 0
+
+	// Write last literals
+	// encode literals length
+	literals_length = src.length - anchor
+	if (literals_length >= runMask) {
+		// add match length to the token
+		dst[dpos++] = (runMask << mlBits)
+		for (var ln = literals_length - runMask; ln > 254; ln -= 255) {
+			dst[dpos++] = 255
+		}
+		dst[dpos++] = ln
+	} else {
+		// add match length to the token
+		dst[dpos++] = (literals_length << mlBits)
+	}
+
+	// write literals
+	pos = anchor
+	while (pos < src.length) {
+		dst[dpos++] = src[pos++]
+	}
+
+	return dpos
+}
+
+},{"cuint":28}],19:[function(require,module,exports){
+(function (Buffer){
+var Decoder = require('./decoder_stream')
+
+/**
+	Decode an LZ4 stream
+ */
+function LZ4_uncompress (input, options) {
+	var output = []
+	var decoder = new Decoder(options)
+
+	decoder.on('data', function (chunk) {
+		output.push(chunk)
+	})
+
+	decoder.end(input)
+
+	return Buffer.concat(output)
+}
+
+exports.LZ4_uncompress = LZ4_uncompress
+}).call(this,require("buffer").Buffer)
+},{"./decoder_stream":20,"buffer":"xx9DpU"}],20:[function(require,module,exports){
+(function (Buffer){
+var Transform = require('stream').Transform
+var inherits = require('util').inherits
+
+var lz4_static = require('./static')
+var utils = lz4_static.utils
+var lz4_binding = utils.bindings
+var lz4_jsbinding = require('./binding')
+
+var STATES = lz4_static.STATES
+var SIZES = lz4_static.SIZES
+
+function Decoder (options) {
+	if ( !(this instanceof Decoder) )
+		return new Decoder(options)
+	
+	Transform.call(this, options)
+	// Options
+	this.options = options || {}
+
+	this.binding = this.options.useJS ? lz4_jsbinding : lz4_binding
+
+	// Encoded data being processed
+	this.buffer = null
+	// Current position within the data
+	this.pos = 0
+	this.descriptor = null
+
+	// Current state of the parsing
+	this.state = STATES.MAGIC
+
+	this.notEnoughData = false
+	this.descriptorStart = 0
+	this.streamSize = null
+	this.dictId = null
+	this.currentStreamChecksum = null
+	this.dataBlockSize = 0
+	this.skippableSize = 0
+}
+inherits(Decoder, Transform)
+
+Decoder.prototype._transform = function (data, encoding, done) {
+	// Handle skippable data
+	if (this.skippableSize > 0) {
+		this.skippableSize -= data.length
+		if (this.skippableSize > 0) {
+			// More to skip
+			done()
+			return
+		}
+
+		data = data.slice(-this.skippableSize)
+		this.skippableSize = 0
+		this.state = STATES.MAGIC
+	}
+	// Buffer the incoming data
+	this.buffer = this.buffer
+					? Buffer.concat( [ this.buffer, data ], this.buffer.length + data.length )
+					: data
+
+	this._main(done)
+}
+
+Decoder.prototype.emit_Error = function (msg) {
+	this.emit( 'error', new Error(msg + ' @' + this.pos) )
+}
+
+Decoder.prototype.check_Size = function (n) {
+	var delta = this.buffer.length - this.pos
+	if (delta <= 0 || delta < n) {
+		if (this.notEnoughData) this.emit_Error( 'Unexpected end of LZ4 stream' )
+		return true
+	}
+
+	this.pos += n
+	return false
+}
+
+Decoder.prototype.read_MagicNumber = function () {
+	var pos = this.pos
+	if ( this.check_Size(SIZES.MAGIC) ) return true
+
+	var magic = this.buffer.readUInt32LE(pos, true)
+
+	// Skippable chunk
+	if ( (magic & 0xFFFFFFF0) === lz4_static.MAGICNUMBER_SKIPPABLE ) {
+		this.state = STATES.SKIP_SIZE
+		return
+	}
+
+	// LZ4 stream
+	if ( magic !== lz4_static.MAGICNUMBER ) {
+		this.pos = pos
+		this.emit_Error( 'Invalid magic number: ' + magic.toString(16).toUpperCase() )
+		return true
+	}
+
+	this.state = STATES.DESCRIPTOR
+}
+
+Decoder.prototype.read_SkippableSize = function () {
+	var pos = this.pos
+	if ( this.check_Size(SIZES.SKIP_SIZE) ) return true
+	this.state = STATES.SKIP_DATA
+	this.skippableSize = this.buffer.readUInt32LE(pos, true)
+}
+
+Decoder.prototype.read_Descriptor = function () {
+	// Flags
+	var pos = this.pos
+	if ( this.check_Size(SIZES.DESCRIPTOR) ) return true
+
+	this.descriptorStart = pos
+
+	// version
+	var descriptor_flg = this.buffer[pos]
+	var version = descriptor_flg >> 6
+	if ( version !== lz4_static.VERSION ) {
+		this.pos = pos
+		this.emit_Error( 'Invalid version: ' + version + ' != ' + lz4_static.VERSION )
+		return true
+	}
+
+	// flags
+	// reserved bit should not be set
+	if ( (descriptor_flg >> 1) & 0x1 ) {
+		this.pos = pos
+		this.emit_Error('Reserved bit set')
+		return true
+	}
+
+	var blockMaxSizeIndex = (this.buffer[pos+1] >> 4) & 0x7
+	var blockMaxSize = lz4_static.blockMaxSizes[ blockMaxSizeIndex ]
+	if ( blockMaxSize === null ) {
+		this.pos = pos
+		this.emit_Error( 'Invalid block max size: ' + blockMaxSizeIndex )
+		return true
+	}
+
+	this.descriptor = {
+		blockIndependence: Boolean( (descriptor_flg >> 5) & 0x1 )
+	,	blockChecksum: Boolean( (descriptor_flg >> 4) & 0x1 )
+	,	blockMaxSize: blockMaxSize
+	,	streamSize: Boolean( (descriptor_flg >> 3) & 0x1 )
+	,	streamChecksum: Boolean( (descriptor_flg >> 2) & 0x1 )
+	,	dict: Boolean( descriptor_flg & 0x1 )
+	,	dictId: 0
+	}
+
+	this.state = STATES.SIZE
+}
+
+Decoder.prototype.read_Size = function () {
+	if (this.descriptor.streamSize) {
+		var pos = this.pos
+		if ( this.check_Size(SIZES.SIZE) ) return true
+		//TODO max size is unsigned 64 bits
+		this.streamSize = this.buffer.slice(pos, pos + 8)
+	}
+
+	this.state = STATES.DICTID
+}
+
+Decoder.prototype.read_DictId = function () {
+	if (this.descriptor.dictId) {
+		var pos = this.pos
+		if ( this.check_Size(SIZES.DICTID) ) return true
+		this.dictId = this.buffer.readUInt32LE(pos, true)
+	}
+
+	this.state = STATES.DESCRIPTOR_CHECKSUM
+}
+
+Decoder.prototype.read_DescriptorChecksum = function () {
+	var pos = this.pos
+	if ( this.check_Size(SIZES.DESCRIPTOR_CHECKSUM) ) return true
+
+	var checksum = this.buffer[pos]
+	var currentChecksum = utils.descriptorChecksum( this.buffer.slice(this.descriptorStart, pos) )
+	if (currentChecksum !== checksum) {
+		this.pos = pos
+		this.emit_Error( 'Invalid stream descriptor checksum' )
+		return true
+	}
+
+	this.state = STATES.DATABLOCK_SIZE
+}
+
+Decoder.prototype.read_DataBlockSize = function () {
+	var pos = this.pos
+	if ( this.check_Size(SIZES.DATABLOCK_SIZE) ) return true
+	var datablock_size = this.buffer.readUInt32LE(pos, true)
+	// Uncompressed
+	if ( datablock_size === lz4_static.EOS ) {
+		this.state = STATES.EOS
+		return
+	}
+
+// if (datablock_size > this.descriptor.blockMaxSize) {
+// 	this.emit_Error( 'ASSERTION: invalid datablock_size: ' + datablock_size.toString(16).toUpperCase() + ' > ' + this.descriptor.blockMaxSize.toString(16).toUpperCase() )
+// }
+	this.dataBlockSize = datablock_size
+
+	this.state = STATES.DATABLOCK_DATA
+}
+
+Decoder.prototype.read_DataBlockData = function () {
+	var pos = this.pos
+	var datablock_size = this.dataBlockSize
+	if ( datablock_size & 0x80000000 ) {
+		// Uncompressed size
+		datablock_size = datablock_size & 0x7FFFFFFF
+	}
+	if ( this.check_Size(datablock_size) ) return true
+
+	this.dataBlock = this.buffer.slice(pos, pos + datablock_size)
+
+	this.state = STATES.DATABLOCK_CHECKSUM
+}
+
+Decoder.prototype.read_DataBlockChecksum = function () {
+	if (this.descriptor.blockChecksum) {
+		if ( this.check_Size(SIZES.DATABLOCK_CHECKSUM) ) return true
+		var checksum = this.buffer.readUInt32LE(this.pos-4, true)
+		var currentChecksum = utils.blockChecksum( this.dataBlock )
+		if (currentChecksum !== checksum) {
+			this.pos = pos
+			this.emit_Error( 'Invalid block checksum' )
+			return true
+		}
+	}
+
+	this.state = STATES.DATABLOCK_UNCOMPRESS
+}
+
+Decoder.prototype.uncompress_DataBlock = function () {
+	var uncompressed
+	// uncompressed?
+	if ( this.dataBlockSize & 0x80000000 ) {
+		uncompressed = this.dataBlock
+	} else {
+		uncompressed = new Buffer(this.descriptor.blockMaxSize)
+		var decodedSize = this.binding.uncompress( this.dataBlock, uncompressed )
+		if (decodedSize < 0) {
+			this.emit_Error( 'Invalid data block: ' + (-decodedSize) )
+			return true
+		}
+		if ( decodedSize < this.descriptor.blockMaxSize )
+			uncompressed = uncompressed.slice(0, decodedSize)
+	}
+	this.dataBlock = null
+	this.push( uncompressed )
+
+	// Stream checksum
+	if (this.descriptor.streamChecksum) {
+		this.currentStreamChecksum = utils.streamChecksum(uncompressed, this.currentStreamChecksum)
+	}
+
+	this.state = STATES.DATABLOCK_SIZE
+}
+
+Decoder.prototype.read_EOS = function () {
+	if (this.descriptor.streamChecksum) {
+		var pos = this.pos
+		if ( this.check_Size(SIZES.EOS) ) return true
+		var checksum = this.buffer.readUInt32LE(pos, true)
+		if ( checksum !== utils.streamChecksum(null, this.currentStreamChecksum) ) {
+			this.pos = pos
+			this.emit_Error( 'Invalid stream checksum: ' + checksum.toString(16).toUpperCase() )
+			return true
+		}
+	}
+
+	this.state = STATES.MAGIC
+}
+
+Decoder.prototype._flush = function (done) {
+	// Error on missing data as no more will be coming
+	this.notEnoughData = true
+	this._main(done)
+}
+
+Decoder.prototype._main = function (done) {
+	var pos = this.pos
+	var notEnoughData
+
+	while ( !notEnoughData && this.pos < this.buffer.length ) {
+		if (this.state === STATES.MAGIC)
+			notEnoughData = this.read_MagicNumber()
+
+		if (this.state === STATES.SKIP_SIZE)
+			notEnoughData = this.read_SkippableSize()
+
+		if (this.state === STATES.DESCRIPTOR)
+			notEnoughData = this.read_Descriptor()
+
+		if (this.state === STATES.SIZE)
+			notEnoughData = this.read_Size()
+
+		if (this.state === STATES.DICTID)
+			notEnoughData = this.read_DictId()
+
+		if (this.state === STATES.DESCRIPTOR_CHECKSUM)
+			notEnoughData = this.read_DescriptorChecksum()
+
+		if (this.state === STATES.DATABLOCK_SIZE)
+			notEnoughData = this.read_DataBlockSize()
+
+		if (this.state === STATES.DATABLOCK_DATA)
+			notEnoughData = this.read_DataBlockData()
+
+		if (this.state === STATES.DATABLOCK_CHECKSUM)
+			notEnoughData = this.read_DataBlockChecksum()
+
+		if (this.state === STATES.DATABLOCK_UNCOMPRESS)
+			notEnoughData = this.uncompress_DataBlock()
+
+		if (this.state === STATES.EOS)
+			notEnoughData = this.read_EOS()
+	}
+
+	if (this.pos > pos) {
+		this.buffer = this.buffer.slice(this.pos)
+		this.pos = 0
+	}
+
+	done()
+}
+
+module.exports = Decoder
+
+}).call(this,require("buffer").Buffer)
+},{"./binding":18,"./static":25,"buffer":"xx9DpU","stream":9,"util":17}],21:[function(require,module,exports){
+(function (Buffer){
+var Encoder = require('./encoder_stream')
+
+/**
+	Encode an LZ4 stream
+ */
+function LZ4_compress (input, options) {
+	var output = []
+	var encoder = new Encoder(options)
+
+	encoder.on('data', function (chunk) {
+		output.push(chunk)
+	})
+
+	encoder.end(input)
+
+	return Buffer.concat(output)
+}
+
+exports.LZ4_compress = LZ4_compress
+
+}).call(this,require("buffer").Buffer)
+},{"./encoder_stream":22,"buffer":"xx9DpU"}],22:[function(require,module,exports){
+(function (Buffer){
+var Transform = require('stream').Transform
+var inherits = require('util').inherits
+
+var lz4_static = require('./static')
+var utils = lz4_static.utils
+var lz4_binding = utils.bindings
+var lz4_jsbinding = require('./binding')
+
+var STATES = lz4_static.STATES
+var SIZES = lz4_static.SIZES
+
+var defaultOptions = {
+	blockIndependence: true
+,	blockChecksum: false
+,	blockMaxSize: 4<<20
+,	streamSize: false
+,	streamChecksum: true
+,	dict: false
+,	dictId: 0
+,	highCompression: false
+}
+
+function Encoder (options) {
+	if ( !(this instanceof Encoder) )
+		return new Encoder(options)
+	
+	Transform.call(this, options)
+
+	// Set the options
+	var o = options || defaultOptions
+	if (o !== defaultOptions)
+		Object.keys(defaultOptions).forEach(function (p) {
+			if ( !o.hasOwnProperty(p) ) o[p] = defaultOptions[p]
+		})
+
+	this.options = o
+
+	this.binding = this.options.useJS ? lz4_jsbinding : lz4_binding
+	this.compress = o.highCompression ? this.binding.compressHC : this.binding.compress
+
+	// Build the stream descriptor from the options
+	// flags
+	var descriptor_flg = 0
+	descriptor_flg = descriptor_flg | (lz4_static.VERSION << 6)			// Version
+	descriptor_flg = descriptor_flg | ((o.blockIndependence & 1) << 5)	// Block independence
+	descriptor_flg = descriptor_flg | ((o.blockChecksum & 1) << 4)		// Block checksum
+	descriptor_flg = descriptor_flg | ((o.streamSize & 1) << 3)			// Stream size
+	descriptor_flg = descriptor_flg | ((o.streamChecksum & 1) << 2)		// Stream checksum
+																		// Reserved bit
+	descriptor_flg = descriptor_flg | (o.dict & 1)						// Preset dictionary
+
+	// block maximum size
+	var descriptor_bd = lz4_static.blockMaxSizes.indexOf(o.blockMaxSize)
+	if (descriptor_bd < 0)
+		throw new Error('Invalid blockMaxSize: ' + o.blockMaxSize)
+
+	this.descriptor = { flg: descriptor_flg, bd: (descriptor_bd & 0x7) << 4 }
+
+	// Data being processed
+	this.buffer = []
+	this.length = 0
+
+	this.first = true
+	this.checksum = null
+}
+inherits(Encoder, Transform)
+
+// Header = magic number + stream descriptor
+Encoder.prototype.headerSize = function () {
+	var streamSizeSize = this.options.streamSize ? SIZES.DESCRIPTOR : 0
+	var dictSize = this.options.dict ? SIZES.DICTID : 0
+
+	return SIZES.MAGIC + 1 + 1 + streamSizeSize + dictSize + 1
+}
+
+Encoder.prototype.header = function () {
+	var headerSize = this.headerSize()
+	var output = new Buffer(headerSize)
+
+	this.state = STATES.MAGIC
+	output.writeUInt32LE(lz4_static.MAGICNUMBER, 0, true)
+
+	this.state = STATES.DESCRIPTOR
+	var descriptor = output.slice(SIZES.MAGIC, output.length - 1)
+
+	// Update the stream descriptor
+	descriptor.writeUInt8(this.descriptor.flg, 0, true)
+	descriptor.writeUInt8(this.descriptor.bd, 1, true)
+
+	var pos = 2
+	this.state = STATES.SIZE
+	if (this.options.streamSize) {
+		//TODO only 32bits size supported
+		descriptor.writeUInt32LE(0, pos, true)
+		descriptor.writeUInt32LE(this.size, pos + 4, true)
+		pos += SIZES.SIZE
+	}
+	this.state = STATES.DICTID
+	if (this.options.dict) {
+		descriptor.writeUInt32LE(this.dictId, pos, true)
+		pos += SIZES.DICTID
+	}
+
+	this.state = STATES.DESCRIPTOR_CHECKSUM
+	output.writeUInt8(
+	  utils.descriptorChecksum( descriptor )
+	, SIZES.MAGIC + pos, false
+	)
+
+	return output
+}
+
+Encoder.prototype.update_Checksum = function (data) {
+	// Calculate the stream checksum
+	this.state = STATES.CHECKSUM_UPDATE
+	if (this.options.streamChecksum) {
+		this.checksum = utils.streamChecksum(data, this.checksum)
+	}
+}
+
+Encoder.prototype.compress_DataBlock = function (data) {
+	this.state = STATES.DATABLOCK_COMPRESS
+	var dbChecksumSize = this.options.blockChecksum ? SIZES.DATABLOCK_CHECKSUM : 0
+	var maxBufSize = this.binding.compressBound(data.length)
+	var buf = new Buffer( SIZES.DATABLOCK_SIZE + maxBufSize + dbChecksumSize )
+	var compressed = buf.slice(SIZES.DATABLOCK_SIZE, SIZES.DATABLOCK_SIZE + maxBufSize)
+	var compressedSize = this.compress(data, compressed)
+
+	// Set the block size
+	this.state = STATES.DATABLOCK_SIZE
+	// Block size shall never be larger than blockMaxSize
+	// console.log("blockMaxSize", this.options.blockMaxSize, "compressedSize", compressedSize)
+	if (compressedSize > 0 && compressedSize <= this.options.blockMaxSize) {
+		// highest bit is 0 (compressed data)
+		buf.writeUInt32LE(compressedSize, 0, true)
+		buf = buf.slice(0, SIZES.DATABLOCK_SIZE + compressedSize + dbChecksumSize)
+	} else {
+		// Cannot compress the data, leave it as is
+		// highest bit is 1 (uncompressed data)
+		buf.writeInt32LE( 0x80000000 | data.length, 0, true)
+		buf = buf.slice(0, SIZES.DATABLOCK_SIZE + data.length + dbChecksumSize)
+		data.copy(buf, SIZES.DATABLOCK_SIZE);
+	}
+
+	// Set the block checksum
+	this.state = STATES.DATABLOCK_CHECKSUM
+	if (this.options.blockChecksum) {
+		// xxHash checksum on undecoded data with a seed of 0
+		var checksum = buf.slice(-dbChecksumSize)
+		checksum.writeUInt32LE( utils.blockChecksum(compressed), 0, false )
+	}
+
+	// Update the stream checksum
+	this.update_Checksum(data)
+
+	this.size += data.length
+
+	return buf
+}
+
+Encoder.prototype._transform = function (data, encoding, done) {
+	if (data) {
+		// Buffer the incoming data
+		this.buffer.push(data)
+		this.length += data.length
+	}
+
+	// Stream header
+	if (this.first) {
+		this.push( this.header() )
+		this.first = false
+	}
+
+	var blockMaxSize = this.options.blockMaxSize
+	// Not enough data for a block
+	if ( this.length < blockMaxSize ) return done()
+
+	// Build the data to be compressed
+	var buf = Buffer.concat(this.buffer, this.length)
+
+	for (var j = 0, i = buf.length; i >= blockMaxSize; i -= blockMaxSize, j += blockMaxSize) {
+		// Compress the block
+		this.push( this.compress_DataBlock( buf.slice(j, j + blockMaxSize) ) )
+	}
+
+	// Set the remaining data
+	if (i > 0) {
+		this.buffer = [ buf.slice(j) ]
+		this.length = this.buffer[0].length
+	} else {
+		this.buffer = []
+		this.length = 0
+	}
+
+	done()
+}
+
+Encoder.prototype._flush = function (done) {
+	if (this.length > 0) {
+		var buf = Buffer.concat(this.buffer, this.length)
+		this.buffer = []
+		this.length = 0
+		var cc = this.compress_DataBlock(buf)
+		this.push( cc )
+	}
+
+	if (this.options.streamChecksum) {
+		this.state = STATES.CHECKSUM
+		var eos = new Buffer(SIZES.EOS + SIZES.CHECKSUM)
+		eos.writeUInt32LE( utils.streamChecksum(null, this.checksum), SIZES.EOS, false )
+	} else {
+		var eos = new Buffer(SIZES.EOS)
+	}
+
+	this.state = STATES.EOS
+	eos.writeUInt32LE(lz4_static.EOS, 0, true)
+	this.push(eos)
+
+	done()
+}
+
+module.exports = Encoder
+
+}).call(this,require("buffer").Buffer)
+},{"./binding":18,"./static":25,"buffer":"xx9DpU","stream":9,"util":17}],"lz4":[function(require,module,exports){
+module.exports=require('nlAsow');
+},{}],"nlAsow":[function(require,module,exports){
+/**
+ * LZ4 based compression and decompression
+ * Copyright (c) 2014 Pierre Curto
+ * MIT Licensed
+ */
+
+module.exports = require('./static')
+
+module.exports.createDecoderStream = require('./decoder_stream')
+module.exports.decode = require('./decoder').LZ4_uncompress
+
+module.exports.createEncoderStream = require('./encoder_stream')
+module.exports.encode = require('./encoder').LZ4_compress
+
+// Expose block decoder and encoders
+var bindings = module.exports.utils.bindings
+
+module.exports.decodeBlock = bindings.uncompress
+
+module.exports.encodeBound = bindings.compressBound
+module.exports.encodeBlock = bindings.compress
+module.exports.encodeBlockHC = bindings.compressHC
+
+},{"./decoder":19,"./decoder_stream":20,"./encoder":21,"./encoder_stream":22,"./static":25}],25:[function(require,module,exports){
+(function (Buffer){
+/**
+ * LZ4 based compression and decompression
+ * Copyright (c) 2014 Pierre Curto
+ * MIT Licensed
+ */
+
+// LZ4 stream constants
+exports.MAGICNUMBER = 0x184D2204
+exports.MAGICNUMBER_BUFFER = new Buffer(4)
+exports.MAGICNUMBER_BUFFER.writeUInt32LE(exports.MAGICNUMBER, 0, false)
+
+exports.EOS = 0
+exports.EOS_BUFFER = new Buffer(4)
+exports.EOS_BUFFER.writeUInt32LE(exports.EOS, 0, false)
+
+exports.VERSION = 1
+
+exports.MAGICNUMBER_SKIPPABLE = 0x184D2A50
+
+// n/a, n/a, n/a, n/a, 64KB, 256KB, 1MB, 4MB
+exports.blockMaxSizes = [ null, null, null, null, 64<<10, 256<<10, 1<<20, 4<<20 ]
+
+// Compressed file extension
+exports.extension = '.lz4'
+
+// Internal stream states
+exports.STATES = {
+// Compressed stream
+	MAGIC: 0
+,	DESCRIPTOR: 1
+,	SIZE: 2
+,	DICTID: 3
+,	DESCRIPTOR_CHECKSUM: 4
+,	DATABLOCK_SIZE: 5
+,	DATABLOCK_DATA: 6
+,	DATABLOCK_CHECKSUM: 7
+,	DATABLOCK_UNCOMPRESS: 8
+,	DATABLOCK_COMPRESS: 9
+,	CHECKSUM: 10
+,	CHECKSUM_UPDATE: 11
+,	EOS: 90
+// Skippable chunk
+,	SKIP_SIZE: 101
+,	SKIP_DATA: 102
+}
+
+exports.SIZES = {
+	MAGIC: 4
+,	DESCRIPTOR: 2
+,	SIZE: 8
+,	DICTID: 4
+,	DESCRIPTOR_CHECKSUM: 1
+,	DATABLOCK_SIZE: 4
+,	DATABLOCK_CHECKSUM: 4
+,	CHECKSUM: 4
+,	EOS: 4
+,	SKIP_SIZE: 4
+}
+
+exports.utils = require('./utils')
+
+}).call(this,require("buffer").Buffer)
+},{"./utils":"uQlS2P","buffer":"xx9DpU"}],"./utils":[function(require,module,exports){
+module.exports=require('uQlS2P');
+},{}],"uQlS2P":[function(require,module,exports){
+/**
+ * Javascript emulated bindings
+ */
+var XXH = require('xxhashjs')
+
+var CHECKSUM_SEED = 0
+
+// Header checksum is second byte of xxhash using 0 as a seed
+exports.descriptorChecksum = function (d) {
+	return (XXH(d, CHECKSUM_SEED).toNumber() >> 8) & 0xFF
+}
+
+exports.blockChecksum = function (d) {
+	return XXH(d, CHECKSUM_SEED).toNumber()
+}
+
+exports.streamChecksum = function (d, c) {
+	if (d === null)
+		return c.digest().toNumber()
+
+	if (c === null)
+		c = XXH(CHECKSUM_SEED)
+
+	return c.update(d)
+}
+
+exports.bindings = require('./binding')
+
+},{"./binding":18,"xxhashjs":31}],28:[function(require,module,exports){
 exports.UINT32 = require('./lib/uint32')
 exports.UINT64 = require('./lib/uint64')
 },{"./lib/uint32":29,"./lib/uint64":30}],29:[function(require,module,exports){
@@ -6674,4 +6674,4 @@ exports.UINT64 = require('./lib/uint64')
 
 })(this)
 }).call(this,require("buffer").Buffer)
-},{"buffer":"cTGqya","cuint":28}]},{},["nlAsow"])
+},{"buffer":"xx9DpU","cuint":28}]},{},["nlAsow"])
