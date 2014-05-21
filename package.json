@@ -35,9 +35,14 @@
   , "cuint": "latest"
   },
   "devDependencies": {
+    "minify": "latest",
     "mocha": ">= 0.10",
     "browserify": ">= 3.x",
-    "benchmark": "*"
+    "benchmark": "*",
+    "karma": "~0.12",
+    "karma-cli": "~0.0.4",
+    "karma-jasmine": "~0.1",
+    "karma-chrome-launcher": "~0.1"
   },
   "scripts": {
     "test": "mocha",
