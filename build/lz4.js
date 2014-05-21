@@ -1,13 +1,978 @@
-require=(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);throw new Error("Cannot find module '"+o+"'")}var f=n[o]={exports:{}};t[o][0].call(f.exports,function(e){var n=t[o][1][e];return s(n?n:e)},f,f.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({"buffer":[function(require,module,exports){
-module.exports=require('xx9DpU');
-},{}],"xx9DpU":[function(require,module,exports){
+require=(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);throw new Error("Cannot find module '"+o+"'")}var f=n[o]={exports:{}};t[o][0].call(f.exports,function(e){var n=t[o][1][e];return s(n?n:e)},f,f.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
 /**
+	Javascript version of the key LZ4 C functions
+ */
+var uint32 = require('cuint').UINT32
+
+/**
+ * Decode a block. Assumptions: input contains all sequences of a 
+ * chunk, output is large enough to receive the decoded data.
+ * If the output buffer is too small, an error will be thrown.
+ * If the returned value is negative, an error occured at the returned offset.
+ *
+ * @param input {Buffer} input data
+ * @param output {Buffer} output data
+ * @return {Number} number of decoded bytes
+ * @private
+ */
+exports.uncompress = function (input, output) {
+	// Process each sequence in the incoming data
+	for (var i = 0, n = input.length, j = 0; i < n;) {
+		var token = input[i++]
+
+		// Literals
+		var literals_length = (token >> 4)
+		if (literals_length > 0) {
+			// length of literals
+			var l = literals_length + 240
+			while (l === 255) {
+				l = input[i++]
+				literals_length += l
+			}
+
+			// Copy the literals
+			var end = i + literals_length
+			while (i < end) output[j++] = input[i++]
+
+			// End of buffer?
+			if (i === n) return j
+		}
+
+		// Match copy
+		// 2 bytes offset (little endian)
+		var offset = input[i++] | (input[i++] << 8)
+
+		// 0 is an invalid offset value
+		if (offset === 0 || offset > j) return -(i-2)
+
+		// length of match copy
+		var match_length = (token & 0xf)
+		var l = match_length + 240
+		while (l === 255) {
+			l = input[i++]
+			match_length += l
+		}
+
+		// Copy the match
+		var pos = j - offset // position of the match copy in the current output
+		var end = j + match_length + 4 // minmatch = 4
+		while (j < end) output[j++] = output[pos++]
+	}
+
+	return j
+}
+
+var
+	maxInputSize	= 0x7E000000
+,	minMatch		= 4
+// uint32() optimization
+,	hashLog			= 16
+,	hashShift		= (minMatch * 8) - hashLog
+,	hashSize		= 1 << hashLog
+
+,	copyLength		= 8
+,	lastLiterals	= 5
+,	mfLimit			= copyLength + minMatch
+,	skipStrength	= 6
+
+,	mlBits  		= 4
+,	mlMask  		= (1 << mlBits) - 1
+,	runBits 		= 8 - mlBits
+,	runMask 		= (1 << runBits) - 1
+
+,	hasher 			= uint32(2654435761)
+
+// CompressBound returns the maximum length of a lz4 block, given it's uncompressed length
+exports.compressBound = function (isize) {
+	return isize > maxInputSize
+		? 0
+		: (isize + (isize/255) + 16) | 0
+}
+
+exports.compressHC = exports.compress
+
+exports.compress = function (src, dst) {
+	// V8 optimization: non sparse array with integers
+	var hashTable = new Array(hashSize)
+	for (var i = 0; i < hashSize; i++) {
+		hashTable[i] = 0
+	}
+	return compressBlock(src, dst, 0, hashTable)
+}
+
+exports.compressDependent = compressBlock
+
+function compressBlock (src, dst, pos, hashTable) {
+	var Hash = uint32() // Reusable unsigned 32 bits integer
+	var dpos = 0
+	var anchor = 0
+
+	if (src.length >= maxInputSize) throw new Error("input too large")
+
+	// Minimum of input bytes for compression (LZ4 specs)
+	if (src.length > mfLimit) {
+		var n = exports.compressBound(src.length)
+		if ( dst.length < n ) throw Error("output too small: " + dst.length + " < " + n)
+
+		var 
+			step  = 1
+		,	findMatchAttempts = (1 << skipStrength) + 3
+		// Keep last few bytes incompressible (LZ4 specs):
+		// last 5 bytes must be literals
+		,	srcLength = src.length - mfLimit
+
+		while (pos + minMatch < srcLength) {
+			// Find a match
+			// min match of 4 bytes aka sequence
+			var sequenceLowBits = src[pos+1]<<8 | src[pos]
+			var sequenceHighBits = src[pos+3]<<8 | src[pos+2]
+			// compute hash for the current sequence
+			var hash = Hash.fromBits(sequenceLowBits, sequenceHighBits)
+							.multiply(hasher)
+							.shiftr(hashShift)
+							.toNumber()
+			// get the position of the sequence matching the hash
+			// NB. since 2 different sequences may have the same hash
+			// it is double-checked below
+			// do -1 to distinguish between initialized and uninitialized values
+			var ref = hashTable[hash] - 1
+			// save position of current sequence in hash table
+			hashTable[hash] = pos + 1
+
+			// first reference or within 64k limit or current sequence !== hashed one: no match
+			if ( ref < 0 ||
+				((pos - ref) >>> 16) > 0 ||
+				(
+					((src[ref+3]<<8 | src[ref+2]) != sequenceHighBits) &&
+					((src[ref+1]<<8 | src[ref]) != sequenceLowBits )
+				)
+			) {
+				// increase step if nothing found within limit
+				step = findMatchAttempts++ >> skipStrength
+				pos += step
+				continue
+			}
+
+			findMatchAttempts = (1 << skipStrength) + 3
+
+			// got a match
+			var literals_length = pos - anchor
+			var offset = pos - ref
+
+			// minMatch already verified
+			pos += minMatch
+			ref += minMatch
+
+			// move to the end of the match (>=minMatch)
+			var match_length = pos
+			while (pos < srcLength && src[pos] == src[ref]) {
+				pos++
+				ref++
+			}
+
+			// match length
+			match_length = pos - match_length
+
+			// token
+			var token = match_length < mlMask ? match_length : mlMask
+
+			// encode literals length
+			if (literals_length >= runMask) {
+				// add match length to the token
+				dst[dpos++] = (runMask << mlBits) + token
+				for (var len = literals_length - runMask; len > 254; len -= 255) {
+					dst[dpos++] = 255
+				}
+				dst[dpos++] = len
+			} else {
+				// add match length to the token
+				dst[dpos++] = (literals_length << mlBits) + token
+			}
+
+			// write literals
+			for (var i = 0; i < literals_length; i++) {
+				dst[dpos++] = src[anchor+i]
+			}
+
+			// encode offset
+			dst[dpos++] = offset
+			dst[dpos++] = (offset >> 8)
+
+			// encode match length
+			if (match_length >= mlMask) {
+				match_length -= mlMask
+				while (match_length >= 255) {
+					match_length -= 255
+					dst[dpos++] = 255
+				}
+
+				dst[dpos++] = match_length
+			}
+
+			anchor = pos
+		}
+	}
+
+	// cannot compress input
+	if (anchor == 0) return 0
+
+	// Write last literals
+	// encode literals length
+	literals_length = src.length - anchor
+	if (literals_length >= runMask) {
+		// add match length to the token
+		dst[dpos++] = (runMask << mlBits)
+		for (var ln = literals_length - runMask; ln > 254; ln -= 255) {
+			dst[dpos++] = 255
+		}
+		dst[dpos++] = ln
+	} else {
+		// add match length to the token
+		dst[dpos++] = (literals_length << mlBits)
+	}
+
+	// write literals
+	pos = anchor
+	while (pos < src.length) {
+		dst[dpos++] = src[pos++]
+	}
+
+	return dpos
+}
+
+},{"cuint":34}],2:[function(require,module,exports){
+(function (Buffer){
+var Decoder = require('./decoder_stream')
+
+/**
+	Decode an LZ4 stream
+ */
+function LZ4_uncompress (input, options) {
+	var output = []
+	var decoder = new Decoder(options)
+
+	decoder.on('data', function (chunk) {
+		output.push(chunk)
+	})
+
+	decoder.end(input)
+
+	return Buffer.concat(output)
+}
+
+exports.LZ4_uncompress = LZ4_uncompress
+}).call(this,require("buffer").Buffer)
+},{"./decoder_stream":3,"buffer":"cTGqya"}],3:[function(require,module,exports){
+(function (Buffer){
+var Transform = require('stream').Transform
+var inherits = require('util').inherits
+
+var lz4_static = require('./static')
+var utils = lz4_static.utils
+var lz4_binding = utils.bindings
+var lz4_jsbinding = require('./binding')
+
+var STATES = lz4_static.STATES
+var SIZES = lz4_static.SIZES
+
+function Decoder (options) {
+	if ( !(this instanceof Decoder) )
+		return new Decoder(options)
+	
+	Transform.call(this, options)
+	// Options
+	this.options = options || {}
+
+	this.binding = this.options.useJS ? lz4_jsbinding : lz4_binding
+
+	// Encoded data being processed
+	this.buffer = null
+	// Current position within the data
+	this.pos = 0
+	this.descriptor = null
+
+	// Current state of the parsing
+	this.state = STATES.MAGIC
+
+	this.notEnoughData = false
+	this.descriptorStart = 0
+	this.streamSize = null
+	this.dictId = null
+	this.currentStreamChecksum = null
+	this.dataBlockSize = 0
+	this.skippableSize = 0
+}
+inherits(Decoder, Transform)
+
+Decoder.prototype._transform = function (data, encoding, done) {
+	// Handle skippable data
+	if (this.skippableSize > 0) {
+		this.skippableSize -= data.length
+		if (this.skippableSize > 0) {
+			// More to skip
+			done()
+			return
+		}
+
+		data = data.slice(-this.skippableSize)
+		this.skippableSize = 0
+		this.state = STATES.MAGIC
+	}
+	// Buffer the incoming data
+	this.buffer = this.buffer
+					? Buffer.concat( [ this.buffer, data ], this.buffer.length + data.length )
+					: data
+
+	this._main(done)
+}
+
+Decoder.prototype.emit_Error = function (msg) {
+	this.emit( 'error', new Error(msg + ' @' + this.pos) )
+}
+
+Decoder.prototype.check_Size = function (n) {
+	var delta = this.buffer.length - this.pos
+	if (delta <= 0 || delta < n) {
+		if (this.notEnoughData) this.emit_Error( 'Unexpected end of LZ4 stream' )
+		return true
+	}
+
+	this.pos += n
+	return false
+}
+
+Decoder.prototype.read_MagicNumber = function () {
+	var pos = this.pos
+	if ( this.check_Size(SIZES.MAGIC) ) return true
+
+	var magic = this.buffer.readUInt32LE(pos, true)
+
+	// Skippable chunk
+	if ( (magic & 0xFFFFFFF0) === lz4_static.MAGICNUMBER_SKIPPABLE ) {
+		this.state = STATES.SKIP_SIZE
+		return
+	}
+
+	// LZ4 stream
+	if ( magic !== lz4_static.MAGICNUMBER ) {
+		this.pos = pos
+		this.emit_Error( 'Invalid magic number: ' + magic.toString(16).toUpperCase() )
+		return true
+	}
+
+	this.state = STATES.DESCRIPTOR
+}
+
+Decoder.prototype.read_SkippableSize = function () {
+	var pos = this.pos
+	if ( this.check_Size(SIZES.SKIP_SIZE) ) return true
+	this.state = STATES.SKIP_DATA
+	this.skippableSize = this.buffer.readUInt32LE(pos, true)
+}
+
+Decoder.prototype.read_Descriptor = function () {
+	// Flags
+	var pos = this.pos
+	if ( this.check_Size(SIZES.DESCRIPTOR) ) return true
+
+	this.descriptorStart = pos
+
+	// version
+	var descriptor_flg = this.buffer[pos]
+	var version = descriptor_flg >> 6
+	if ( version !== lz4_static.VERSION ) {
+		this.pos = pos
+		this.emit_Error( 'Invalid version: ' + version + ' != ' + lz4_static.VERSION )
+		return true
+	}
+
+	// flags
+	// reserved bit should not be set
+	if ( (descriptor_flg >> 1) & 0x1 ) {
+		this.pos = pos
+		this.emit_Error('Reserved bit set')
+		return true
+	}
+
+	var blockMaxSizeIndex = (this.buffer[pos+1] >> 4) & 0x7
+	var blockMaxSize = lz4_static.blockMaxSizes[ blockMaxSizeIndex ]
+	if ( blockMaxSize === null ) {
+		this.pos = pos
+		this.emit_Error( 'Invalid block max size: ' + blockMaxSizeIndex )
+		return true
+	}
+
+	this.descriptor = {
+		blockIndependence: Boolean( (descriptor_flg >> 5) & 0x1 )
+	,	blockChecksum: Boolean( (descriptor_flg >> 4) & 0x1 )
+	,	blockMaxSize: blockMaxSize
+	,	streamSize: Boolean( (descriptor_flg >> 3) & 0x1 )
+	,	streamChecksum: Boolean( (descriptor_flg >> 2) & 0x1 )
+	,	dict: Boolean( descriptor_flg & 0x1 )
+	,	dictId: 0
+	}
+
+	this.state = STATES.SIZE
+}
+
+Decoder.prototype.read_Size = function () {
+	if (this.descriptor.streamSize) {
+		var pos = this.pos
+		if ( this.check_Size(SIZES.SIZE) ) return true
+		//TODO max size is unsigned 64 bits
+		this.streamSize = this.buffer.slice(pos, pos + 8)
+	}
+
+	this.state = STATES.DICTID
+}
+
+Decoder.prototype.read_DictId = function () {
+	if (this.descriptor.dictId) {
+		var pos = this.pos
+		if ( this.check_Size(SIZES.DICTID) ) return true
+		this.dictId = this.buffer.readUInt32LE(pos, true)
+	}
+
+	this.state = STATES.DESCRIPTOR_CHECKSUM
+}
+
+Decoder.prototype.read_DescriptorChecksum = function () {
+	var pos = this.pos
+	if ( this.check_Size(SIZES.DESCRIPTOR_CHECKSUM) ) return true
+
+	var checksum = this.buffer[pos]
+	var currentChecksum = utils.descriptorChecksum( this.buffer.slice(this.descriptorStart, pos) )
+	if (currentChecksum !== checksum) {
+		this.pos = pos
+		this.emit_Error( 'Invalid stream descriptor checksum' )
+		return true
+	}
+
+	this.state = STATES.DATABLOCK_SIZE
+}
+
+Decoder.prototype.read_DataBlockSize = function () {
+	var pos = this.pos
+	if ( this.check_Size(SIZES.DATABLOCK_SIZE) ) return true
+	var datablock_size = this.buffer.readUInt32LE(pos, true)
+	// Uncompressed
+	if ( datablock_size === lz4_static.EOS ) {
+		this.state = STATES.EOS
+		return
+	}
+
+// if (datablock_size > this.descriptor.blockMaxSize) {
+// 	this.emit_Error( 'ASSERTION: invalid datablock_size: ' + datablock_size.toString(16).toUpperCase() + ' > ' + this.descriptor.blockMaxSize.toString(16).toUpperCase() )
+// }
+	this.dataBlockSize = datablock_size
+
+	this.state = STATES.DATABLOCK_DATA
+}
+
+Decoder.prototype.read_DataBlockData = function () {
+	var pos = this.pos
+	var datablock_size = this.dataBlockSize
+	if ( datablock_size & 0x80000000 ) {
+		// Uncompressed size
+		datablock_size = datablock_size & 0x7FFFFFFF
+	}
+	if ( this.check_Size(datablock_size) ) return true
+
+	this.dataBlock = this.buffer.slice(pos, pos + datablock_size)
+
+	this.state = STATES.DATABLOCK_CHECKSUM
+}
+
+Decoder.prototype.read_DataBlockChecksum = function () {
+	if (this.descriptor.blockChecksum) {
+		if ( this.check_Size(SIZES.DATABLOCK_CHECKSUM) ) return true
+		var checksum = this.buffer.readUInt32LE(this.pos-4, true)
+		var currentChecksum = utils.blockChecksum( this.dataBlock )
+		if (currentChecksum !== checksum) {
+			this.pos = pos
+			this.emit_Error( 'Invalid block checksum' )
+			return true
+		}
+	}
+
+	this.state = STATES.DATABLOCK_UNCOMPRESS
+}
+
+Decoder.prototype.uncompress_DataBlock = function () {
+	var uncompressed
+	// uncompressed?
+	if ( this.dataBlockSize & 0x80000000 ) {
+		uncompressed = this.dataBlock
+	} else {
+		uncompressed = new Buffer(this.descriptor.blockMaxSize)
+		var decodedSize = this.binding.uncompress( this.dataBlock, uncompressed )
+		if (decodedSize < 0) {
+			this.emit_Error( 'Invalid data block: ' + (-decodedSize) )
+			return true
+		}
+		if ( decodedSize < this.descriptor.blockMaxSize )
+			uncompressed = uncompressed.slice(0, decodedSize)
+	}
+	this.dataBlock = null
+	this.push( uncompressed )
+
+	// Stream checksum
+	if (this.descriptor.streamChecksum) {
+		this.currentStreamChecksum = utils.streamChecksum(uncompressed, this.currentStreamChecksum)
+	}
+
+	this.state = STATES.DATABLOCK_SIZE
+}
+
+Decoder.prototype.read_EOS = function () {
+	if (this.descriptor.streamChecksum) {
+		var pos = this.pos
+		if ( this.check_Size(SIZES.EOS) ) return true
+		var checksum = this.buffer.readUInt32LE(pos, true)
+		if ( checksum !== utils.streamChecksum(null, this.currentStreamChecksum) ) {
+			this.pos = pos
+			this.emit_Error( 'Invalid stream checksum: ' + checksum.toString(16).toUpperCase() )
+			return true
+		}
+	}
+
+	this.state = STATES.MAGIC
+}
+
+Decoder.prototype._flush = function (done) {
+	// Error on missing data as no more will be coming
+	this.notEnoughData = true
+	this._main(done)
+}
+
+Decoder.prototype._main = function (done) {
+	var pos = this.pos
+	var notEnoughData
+
+	while ( !notEnoughData && this.pos < this.buffer.length ) {
+		if (this.state === STATES.MAGIC)
+			notEnoughData = this.read_MagicNumber()
+
+		if (this.state === STATES.SKIP_SIZE)
+			notEnoughData = this.read_SkippableSize()
+
+		if (this.state === STATES.DESCRIPTOR)
+			notEnoughData = this.read_Descriptor()
+
+		if (this.state === STATES.SIZE)
+			notEnoughData = this.read_Size()
+
+		if (this.state === STATES.DICTID)
+			notEnoughData = this.read_DictId()
+
+		if (this.state === STATES.DESCRIPTOR_CHECKSUM)
+			notEnoughData = this.read_DescriptorChecksum()
+
+		if (this.state === STATES.DATABLOCK_SIZE)
+			notEnoughData = this.read_DataBlockSize()
+
+		if (this.state === STATES.DATABLOCK_DATA)
+			notEnoughData = this.read_DataBlockData()
+
+		if (this.state === STATES.DATABLOCK_CHECKSUM)
+			notEnoughData = this.read_DataBlockChecksum()
+
+		if (this.state === STATES.DATABLOCK_UNCOMPRESS)
+			notEnoughData = this.uncompress_DataBlock()
+
+		if (this.state === STATES.EOS)
+			notEnoughData = this.read_EOS()
+	}
+
+	if (this.pos > pos) {
+		this.buffer = this.buffer.slice(this.pos)
+		this.pos = 0
+	}
+
+	done()
+}
+
+module.exports = Decoder
+
+}).call(this,require("buffer").Buffer)
+},{"./binding":1,"./static":8,"buffer":"cTGqya","stream":31,"util":33}],4:[function(require,module,exports){
+(function (Buffer){
+var Encoder = require('./encoder_stream')
+
+/**
+	Encode an LZ4 stream
+ */
+function LZ4_compress (input, options) {
+	var output = []
+	var encoder = new Encoder(options)
+
+	encoder.on('data', function (chunk) {
+		output.push(chunk)
+	})
+
+	encoder.end(input)
+
+	return Buffer.concat(output)
+}
+
+exports.LZ4_compress = LZ4_compress
+
+}).call(this,require("buffer").Buffer)
+},{"./encoder_stream":5,"buffer":"cTGqya"}],5:[function(require,module,exports){
+(function (Buffer){
+var Transform = require('stream').Transform
+var inherits = require('util').inherits
+
+var lz4_static = require('./static')
+var utils = lz4_static.utils
+var lz4_binding = utils.bindings
+var lz4_jsbinding = require('./binding')
+
+var STATES = lz4_static.STATES
+var SIZES = lz4_static.SIZES
+
+var defaultOptions = {
+	blockIndependence: true
+,	blockChecksum: false
+,	blockMaxSize: 4<<20
+,	streamSize: false
+,	streamChecksum: true
+,	dict: false
+,	dictId: 0
+,	highCompression: false
+}
+
+function Encoder (options) {
+	if ( !(this instanceof Encoder) )
+		return new Encoder(options)
+	
+	Transform.call(this, options)
+
+	// Set the options
+	var o = options || defaultOptions
+	if (o !== defaultOptions)
+		Object.keys(defaultOptions).forEach(function (p) {
+			if ( !o.hasOwnProperty(p) ) o[p] = defaultOptions[p]
+		})
+
+	this.options = o
+
+	this.binding = this.options.useJS ? lz4_jsbinding : lz4_binding
+	this.compress = o.highCompression ? this.binding.compressHC : this.binding.compress
+
+	// Build the stream descriptor from the options
+	// flags
+	var descriptor_flg = 0
+	descriptor_flg = descriptor_flg | (lz4_static.VERSION << 6)			// Version
+	descriptor_flg = descriptor_flg | ((o.blockIndependence & 1) << 5)	// Block independence
+	descriptor_flg = descriptor_flg | ((o.blockChecksum & 1) << 4)		// Block checksum
+	descriptor_flg = descriptor_flg | ((o.streamSize & 1) << 3)			// Stream size
+	descriptor_flg = descriptor_flg | ((o.streamChecksum & 1) << 2)		// Stream checksum
+																		// Reserved bit
+	descriptor_flg = descriptor_flg | (o.dict & 1)						// Preset dictionary
+
+	// block maximum size
+	var descriptor_bd = lz4_static.blockMaxSizes.indexOf(o.blockMaxSize)
+	if (descriptor_bd < 0)
+		throw new Error('Invalid blockMaxSize: ' + o.blockMaxSize)
+
+	this.descriptor = { flg: descriptor_flg, bd: (descriptor_bd & 0x7) << 4 }
+
+	// Data being processed
+	this.buffer = []
+	this.length = 0
+
+	this.first = true
+	this.checksum = null
+}
+inherits(Encoder, Transform)
+
+// Header = magic number + stream descriptor
+Encoder.prototype.headerSize = function () {
+	var streamSizeSize = this.options.streamSize ? SIZES.DESCRIPTOR : 0
+	var dictSize = this.options.dict ? SIZES.DICTID : 0
+
+	return SIZES.MAGIC + 1 + 1 + streamSizeSize + dictSize + 1
+}
+
+Encoder.prototype.header = function () {
+	var headerSize = this.headerSize()
+	var output = new Buffer(headerSize)
+
+	this.state = STATES.MAGIC
+	output.writeUInt32LE(lz4_static.MAGICNUMBER, 0, true)
+
+	this.state = STATES.DESCRIPTOR
+	var descriptor = output.slice(SIZES.MAGIC, output.length - 1)
+
+	// Update the stream descriptor
+	descriptor.writeUInt8(this.descriptor.flg, 0, true)
+	descriptor.writeUInt8(this.descriptor.bd, 1, true)
+
+	var pos = 2
+	this.state = STATES.SIZE
+	if (this.options.streamSize) {
+		//TODO only 32bits size supported
+		descriptor.writeUInt32LE(0, pos, true)
+		descriptor.writeUInt32LE(this.size, pos + 4, true)
+		pos += SIZES.SIZE
+	}
+	this.state = STATES.DICTID
+	if (this.options.dict) {
+		descriptor.writeUInt32LE(this.dictId, pos, true)
+		pos += SIZES.DICTID
+	}
+
+	this.state = STATES.DESCRIPTOR_CHECKSUM
+	output.writeUInt8(
+	  utils.descriptorChecksum( descriptor )
+	, SIZES.MAGIC + pos, false
+	)
+
+	return output
+}
+
+Encoder.prototype.update_Checksum = function (data) {
+	// Calculate the stream checksum
+	this.state = STATES.CHECKSUM_UPDATE
+	if (this.options.streamChecksum) {
+		this.checksum = utils.streamChecksum(data, this.checksum)
+	}
+}
+
+Encoder.prototype.compress_DataBlock = function (data) {
+	this.state = STATES.DATABLOCK_COMPRESS
+	var dbChecksumSize = this.options.blockChecksum ? SIZES.DATABLOCK_CHECKSUM : 0
+	var maxBufSize = this.binding.compressBound(data.length)
+	var buf = new Buffer( SIZES.DATABLOCK_SIZE + maxBufSize + dbChecksumSize )
+	var compressed = buf.slice(SIZES.DATABLOCK_SIZE, SIZES.DATABLOCK_SIZE + maxBufSize)
+	var compressedSize = this.compress(data, compressed)
+
+	// Set the block size
+	this.state = STATES.DATABLOCK_SIZE
+	// Block size shall never be larger than blockMaxSize
+	// console.log("blockMaxSize", this.options.blockMaxSize, "compressedSize", compressedSize)
+	if (compressedSize > 0 && compressedSize <= this.options.blockMaxSize) {
+		// highest bit is 0 (compressed data)
+		buf.writeUInt32LE(compressedSize, 0, true)
+		buf = buf.slice(0, SIZES.DATABLOCK_SIZE + compressedSize + dbChecksumSize)
+	} else {
+		// Cannot compress the data, leave it as is
+		// highest bit is 1 (uncompressed data)
+		buf.writeInt32LE( 0x80000000 | data.length, 0, true)
+		buf = buf.slice(0, SIZES.DATABLOCK_SIZE + data.length + dbChecksumSize)
+		data.copy(buf, SIZES.DATABLOCK_SIZE);
+	}
+
+	// Set the block checksum
+	this.state = STATES.DATABLOCK_CHECKSUM
+	if (this.options.blockChecksum) {
+		// xxHash checksum on undecoded data with a seed of 0
+		var checksum = buf.slice(-dbChecksumSize)
+		checksum.writeUInt32LE( utils.blockChecksum(compressed), 0, false )
+	}
+
+	// Update the stream checksum
+	this.update_Checksum(data)
+
+	this.size += data.length
+
+	return buf
+}
+
+Encoder.prototype._transform = function (data, encoding, done) {
+	if (data) {
+		// Buffer the incoming data
+		this.buffer.push(data)
+		this.length += data.length
+	}
+
+	// Stream header
+	if (this.first) {
+		this.push( this.header() )
+		this.first = false
+	}
+
+	var blockMaxSize = this.options.blockMaxSize
+	// Not enough data for a block
+	if ( this.length < blockMaxSize ) return done()
+
+	// Build the data to be compressed
+	var buf = Buffer.concat(this.buffer, this.length)
+
+	for (var j = 0, i = buf.length; i >= blockMaxSize; i -= blockMaxSize, j += blockMaxSize) {
+		// Compress the block
+		this.push( this.compress_DataBlock( buf.slice(j, j + blockMaxSize) ) )
+	}
+
+	// Set the remaining data
+	if (i > 0) {
+		this.buffer = [ buf.slice(j) ]
+		this.length = this.buffer[0].length
+	} else {
+		this.buffer = []
+		this.length = 0
+	}
+
+	done()
+}
+
+Encoder.prototype._flush = function (done) {
+	if (this.length > 0) {
+		var buf = Buffer.concat(this.buffer, this.length)
+		this.buffer = []
+		this.length = 0
+		var cc = this.compress_DataBlock(buf)
+		this.push( cc )
+	}
+
+	if (this.options.streamChecksum) {
+		this.state = STATES.CHECKSUM
+		var eos = new Buffer(SIZES.EOS + SIZES.CHECKSUM)
+		eos.writeUInt32LE( utils.streamChecksum(null, this.checksum), SIZES.EOS, false )
+	} else {
+		var eos = new Buffer(SIZES.EOS)
+	}
+
+	this.state = STATES.EOS
+	eos.writeUInt32LE(lz4_static.EOS, 0, true)
+	this.push(eos)
+
+	done()
+}
+
+module.exports = Encoder
+
+}).call(this,require("buffer").Buffer)
+},{"./binding":1,"./static":8,"buffer":"cTGqya","stream":31,"util":33}],"nlAsow":[function(require,module,exports){
+/**
+ * LZ4 based compression and decompression
+ * Copyright (c) 2014 Pierre Curto
+ * MIT Licensed
+ */
+
+module.exports = require('./static')
+
+module.exports.createDecoderStream = require('./decoder_stream')
+module.exports.decode = require('./decoder').LZ4_uncompress
+
+module.exports.createEncoderStream = require('./encoder_stream')
+module.exports.encode = require('./encoder').LZ4_compress
+
+// Expose block decoder and encoders
+var bindings = module.exports.utils.bindings
+
+module.exports.decodeBlock = bindings.uncompress
+
+module.exports.encodeBound = bindings.compressBound
+module.exports.encodeBlock = bindings.compress
+module.exports.encodeBlockHC = bindings.compressHC
+
+},{"./decoder":2,"./decoder_stream":3,"./encoder":4,"./encoder_stream":5,"./static":8}],"lz4":[function(require,module,exports){
+module.exports=require('nlAsow');
+},{}],8:[function(require,module,exports){
+(function (Buffer){
+/**
+ * LZ4 based compression and decompression
+ * Copyright (c) 2014 Pierre Curto
+ * MIT Licensed
+ */
+
+// LZ4 stream constants
+exports.MAGICNUMBER = 0x184D2204
+exports.MAGICNUMBER_BUFFER = new Buffer(4)
+exports.MAGICNUMBER_BUFFER.writeUInt32LE(exports.MAGICNUMBER, 0, false)
+
+exports.EOS = 0
+exports.EOS_BUFFER = new Buffer(4)
+exports.EOS_BUFFER.writeUInt32LE(exports.EOS, 0, false)
+
+exports.VERSION = 1
+
+exports.MAGICNUMBER_SKIPPABLE = 0x184D2A50
+
+// n/a, n/a, n/a, n/a, 64KB, 256KB, 1MB, 4MB
+exports.blockMaxSizes = [ null, null, null, null, 64<<10, 256<<10, 1<<20, 4<<20 ]
+
+// Compressed file extension
+exports.extension = '.lz4'
+
+// Internal stream states
+exports.STATES = {
+// Compressed stream
+	MAGIC: 0
+,	DESCRIPTOR: 1
+,	SIZE: 2
+,	DICTID: 3
+,	DESCRIPTOR_CHECKSUM: 4
+,	DATABLOCK_SIZE: 5
+,	DATABLOCK_DATA: 6
+,	DATABLOCK_CHECKSUM: 7
+,	DATABLOCK_UNCOMPRESS: 8
+,	DATABLOCK_COMPRESS: 9
+,	CHECKSUM: 10
+,	CHECKSUM_UPDATE: 11
+,	EOS: 90
+// Skippable chunk
+,	SKIP_SIZE: 101
+,	SKIP_DATA: 102
+}
+
+exports.SIZES = {
+	MAGIC: 4
+,	DESCRIPTOR: 2
+,	SIZE: 8
+,	DICTID: 4
+,	DESCRIPTOR_CHECKSUM: 1
+,	DATABLOCK_SIZE: 4
+,	DATABLOCK_CHECKSUM: 4
+,	CHECKSUM: 4
+,	EOS: 4
+,	SKIP_SIZE: 4
+}
+
+exports.utils = require('./utils')
+
+}).call(this,require("buffer").Buffer)
+},{"./utils":"uQlS2P","buffer":"cTGqya"}],"uQlS2P":[function(require,module,exports){
+/**
+ * Javascript emulated bindings
+ */
+var XXH = require('xxhashjs')
+
+var CHECKSUM_SEED = 0
+
+// Header checksum is second byte of xxhash using 0 as a seed
+exports.descriptorChecksum = function (d) {
+	return (XXH(d, CHECKSUM_SEED).toNumber() >> 8) & 0xFF
+}
+
+exports.blockChecksum = function (d) {
+	return XXH(d, CHECKSUM_SEED).toNumber()
+}
+
+exports.streamChecksum = function (d, c) {
+	if (d === null)
+		return c.digest().toNumber()
+
+	if (c === null)
+		c = XXH(CHECKSUM_SEED)
+
+	return c.update(d)
+}
+
+exports.bindings = require('./binding')
+
+},{"./binding":1,"xxhashjs":37}],"./utils":[function(require,module,exports){
+module.exports=require('uQlS2P');
+},{}],"buffer":[function(require,module,exports){
+module.exports=require('cTGqya');
+},{}],"cTGqya":[function(require,module,exports){
+/*!
  * The buffer module from node.js, for the browser.
  *
- * Author:   Feross Aboukhadijeh <feross@feross.org> <http://feross.org>
- * License:  MIT
- *
- * `npm install buffer`
+ * @author   Feross Aboukhadijeh <feross@feross.org> <http://feross.org>
+ * @license  MIT
  */
 
 var base64 = require('base64-js')
@@ -24,17 +989,14 @@ Buffer.poolSize = 8192
  *   === false   Use Object implementation (compatible down to IE6)
  */
 Buffer._useTypedArrays = (function () {
-   // Detect if browser supports Typed Arrays. Supported browsers are IE 10+,
-   // Firefox 4+, Chrome 7+, Safari 5.1+, Opera 11.6+, iOS 4.2+.
-  if (typeof Uint8Array === 'undefined' || typeof ArrayBuffer === 'undefined')
-    return false
-
-  // Does the browser support adding properties to `Uint8Array` instances? If
-  // not, then that's the same as no `Uint8Array` support. We need to be able to
-  // add all the node Buffer API methods.
-  // Relevant Firefox bug: https://bugzilla.mozilla.org/show_bug.cgi?id=695438
+  // Detect if browser supports Typed Arrays. Supported browsers are IE 10+, Firefox 4+,
+  // Chrome 7+, Safari 5.1+, Opera 11.6+, iOS 4.2+. If the browser does not support adding
+  // properties to `Uint8Array` instances, then that's the same as no `Uint8Array` support
+  // because we need to be able to add all the node Buffer API methods. This is an issue
+  // in Firefox 4-29. Now fixed: https://bugzilla.mozilla.org/show_bug.cgi?id=695438
   try {
-    var arr = new Uint8Array(0)
+    var buf = new ArrayBuffer(0)
+    var arr = new Uint8Array(buf)
     arr.foo = function () { return 42 }
     return 42 === arr.foo() &&
         typeof arr.subarray === 'function' // Chrome 9-10 lack `subarray`
@@ -77,14 +1039,14 @@ function Buffer (subject, encoding, noZero) {
   else if (type === 'string')
     length = Buffer.byteLength(subject, encoding)
   else if (type === 'object')
-    length = coerce(subject.length) // Assume object is an array
+    length = coerce(subject.length) // assume that object is array-like
   else
     throw new Error('First argument needs to be a number, array or string.')
 
   var buf
   if (Buffer._useTypedArrays) {
     // Preferred: Return an augmented `Uint8Array` instance for best performance
-    buf = augment(new Uint8Array(length))
+    buf = Buffer._augment(new Uint8Array(length))
   } else {
     // Fallback: Return THIS instance of Buffer (created by `new`)
     buf = this
@@ -93,9 +1055,8 @@ function Buffer (subject, encoding, noZero) {
   }
 
   var i
-  if (Buffer._useTypedArrays && typeof Uint8Array === 'function' &&
-      subject instanceof Uint8Array) {
-    // Speed optimization -- use set if we're copying from a Uint8Array
+  if (Buffer._useTypedArrays && typeof subject.byteLength === 'number') {
+    // Speed optimization -- use set if we're copying from a typed array
     buf._set(subject)
   } else if (isArrayish(subject)) {
     // Treat array-ish objects as a byte array
@@ -144,7 +1105,7 @@ Buffer.isBuffer = function (b) {
 
 Buffer.byteLength = function (str, encoding) {
   var ret
-  str = str + ''
+  str = str.toString()
   switch (encoding || 'utf8') {
     case 'hex':
       ret = str.length / 2
@@ -174,8 +1135,7 @@ Buffer.byteLength = function (str, encoding) {
 }
 
 Buffer.concat = function (list, totalLength) {
-  assert(isArray(list), 'Usage: Buffer.concat(list, [totalLength])\n' +
-      'list should be an Array.')
+  assert(isArray(list), 'Usage: Buffer.concat(list[, length])')
 
   if (list.length === 0) {
     return new Buffer(0)
@@ -184,7 +1144,7 @@ Buffer.concat = function (list, totalLength) {
   }
 
   var i
-  if (typeof totalLength !== 'number') {
+  if (totalLength === undefined) {
     totalLength = 0
     for (i = 0; i < list.length; i++) {
       totalLength += list[i].length
@@ -201,10 +1161,28 @@ Buffer.concat = function (list, totalLength) {
   return buf
 }
 
+Buffer.compare = function (a, b) {
+  assert(Buffer.isBuffer(a) && Buffer.isBuffer(b), 'Arguments must be Buffers')
+  var x = a.length
+  var y = b.length
+  for (var i = 0, len = Math.min(x, y); i < len && a[i] === b[i]; i++) {}
+  if (i !== len) {
+    x = a[i]
+    y = b[i]
+  }
+  if (x < y) {
+    return -1
+  }
+  if (y < x) {
+    return 1
+  }
+  return 0
+}
+
 // BUFFER INSTANCE METHODS
 // =======================
 
-function _hexWrite (buf, string, offset, length) {
+function hexWrite (buf, string, offset, length) {
   offset = Number(offset) || 0
   var remaining = buf.length - offset
   if (!length) {
@@ -228,35 +1206,30 @@ function _hexWrite (buf, string, offset, length) {
     assert(!isNaN(byte), 'Invalid hex string')
     buf[offset + i] = byte
   }
-  Buffer._charsWritten = i * 2
   return i
 }
 
-function _utf8Write (buf, string, offset, length) {
-  var charsWritten = Buffer._charsWritten =
-    blitBuffer(utf8ToBytes(string), buf, offset, length)
+function utf8Write (buf, string, offset, length) {
+  var charsWritten = blitBuffer(utf8ToBytes(string), buf, offset, length)
   return charsWritten
 }
 
-function _asciiWrite (buf, string, offset, length) {
-  var charsWritten = Buffer._charsWritten =
-    blitBuffer(asciiToBytes(string), buf, offset, length)
+function asciiWrite (buf, string, offset, length) {
+  var charsWritten = blitBuffer(asciiToBytes(string), buf, offset, length)
   return charsWritten
 }
 
-function _binaryWrite (buf, string, offset, length) {
-  return _asciiWrite(buf, string, offset, length)
+function binaryWrite (buf, string, offset, length) {
+  return asciiWrite(buf, string, offset, length)
 }
 
-function _base64Write (buf, string, offset, length) {
-  var charsWritten = Buffer._charsWritten =
-    blitBuffer(base64ToBytes(string), buf, offset, length)
+function base64Write (buf, string, offset, length) {
+  var charsWritten = blitBuffer(base64ToBytes(string), buf, offset, length)
   return charsWritten
 }
 
-function _utf16leWrite (buf, string, offset, length) {
-  var charsWritten = Buffer._charsWritten =
-    blitBuffer(utf16leToBytes(string), buf, offset, length)
+function utf16leWrite (buf, string, offset, length) {
+  var charsWritten = blitBuffer(utf16leToBytes(string), buf, offset, length)
   return charsWritten
 }
 
@@ -290,26 +1263,26 @@ Buffer.prototype.write = function (string, offset, length, encoding) {
   var ret
   switch (encoding) {
     case 'hex':
-      ret = _hexWrite(this, string, offset, length)
+      ret = hexWrite(this, string, offset, length)
       break
     case 'utf8':
     case 'utf-8':
-      ret = _utf8Write(this, string, offset, length)
+      ret = utf8Write(this, string, offset, length)
       break
     case 'ascii':
-      ret = _asciiWrite(this, string, offset, length)
+      ret = asciiWrite(this, string, offset, length)
       break
     case 'binary':
-      ret = _binaryWrite(this, string, offset, length)
+      ret = binaryWrite(this, string, offset, length)
       break
     case 'base64':
-      ret = _base64Write(this, string, offset, length)
+      ret = base64Write(this, string, offset, length)
       break
     case 'ucs2':
     case 'ucs-2':
     case 'utf16le':
     case 'utf-16le':
-      ret = _utf16leWrite(this, string, offset, length)
+      ret = utf16leWrite(this, string, offset, length)
       break
     default:
       throw new Error('Unknown encoding')
@@ -322,9 +1295,7 @@ Buffer.prototype.toString = function (encoding, start, end) {
 
   encoding = String(encoding || 'utf8').toLowerCase()
   start = Number(start) || 0
-  end = (end !== undefined)
-    ? Number(end)
-    : end = self.length
+  end = (end === undefined) ? self.length : Number(end)
 
   // Fastpath empty strings
   if (end === start)
@@ -333,26 +1304,26 @@ Buffer.prototype.toString = function (encoding, start, end) {
   var ret
   switch (encoding) {
     case 'hex':
-      ret = _hexSlice(self, start, end)
+      ret = hexSlice(self, start, end)
       break
     case 'utf8':
     case 'utf-8':
-      ret = _utf8Slice(self, start, end)
+      ret = utf8Slice(self, start, end)
       break
     case 'ascii':
-      ret = _asciiSlice(self, start, end)
+      ret = asciiSlice(self, start, end)
       break
     case 'binary':
-      ret = _binarySlice(self, start, end)
+      ret = binarySlice(self, start, end)
       break
     case 'base64':
-      ret = _base64Slice(self, start, end)
+      ret = base64Slice(self, start, end)
       break
     case 'ucs2':
     case 'ucs-2':
     case 'utf16le':
     case 'utf-16le':
-      ret = _utf16leSlice(self, start, end)
+      ret = utf16leSlice(self, start, end)
       break
     default:
       throw new Error('Unknown encoding')
@@ -365,6 +1336,16 @@ Buffer.prototype.toJSON = function () {
     type: 'Buffer',
     data: Array.prototype.slice.call(this._arr || this, 0)
   }
+}
+
+Buffer.prototype.equals = function (b) {
+  assert(Buffer.isBuffer(b), 'Argument must be a Buffer')
+  return Buffer.compare(this, b) === 0
+}
+
+Buffer.prototype.compare = function (b) {
+  assert(Buffer.isBuffer(b), 'Argument must be a Buffer')
+  return Buffer.compare(this, b)
 }
 
 // copy(targetBuffer, targetStart=0, sourceStart=0, sourceEnd=buffer.length)
@@ -392,12 +1373,18 @@ Buffer.prototype.copy = function (target, target_start, start, end) {
   if (target.length - target_start < end - start)
     end = target.length - target_start + start
 
-  // copy!
-  for (var i = 0; i < end - start; i++)
-    target[i + target_start] = this[i + start]
+  var len = end - start
+
+  if (len < 100 || !Buffer._useTypedArrays) {
+    for (var i = 0; i < len; i++) {
+      target[i + target_start] = this[i + start]
+    }
+  } else {
+    target._set(this.subarray(start, start + len), target_start)
+  }
 }
 
-function _base64Slice (buf, start, end) {
+function base64Slice (buf, start, end) {
   if (start === 0 && end === buf.length) {
     return base64.fromByteArray(buf)
   } else {
@@ -405,7 +1392,7 @@ function _base64Slice (buf, start, end) {
   }
 }
 
-function _utf8Slice (buf, start, end) {
+function utf8Slice (buf, start, end) {
   var res = ''
   var tmp = ''
   end = Math.min(buf.length, end)
@@ -422,20 +1409,21 @@ function _utf8Slice (buf, start, end) {
   return res + decodeUtf8Char(tmp)
 }
 
-function _asciiSlice (buf, start, end) {
+function asciiSlice (buf, start, end) {
   var ret = ''
   end = Math.min(buf.length, end)
 
-  for (var i = start; i < end; i++)
+  for (var i = start; i < end; i++) {
     ret += String.fromCharCode(buf[i])
+  }
   return ret
 }
 
-function _binarySlice (buf, start, end) {
-  return _asciiSlice(buf, start, end)
+function binarySlice (buf, start, end) {
+  return asciiSlice(buf, start, end)
 }
 
-function _hexSlice (buf, start, end) {
+function hexSlice (buf, start, end) {
   var len = buf.length
 
   if (!start || start < 0) start = 0
@@ -448,11 +1436,11 @@ function _hexSlice (buf, start, end) {
   return out
 }
 
-function _utf16leSlice (buf, start, end) {
+function utf16leSlice (buf, start, end) {
   var bytes = buf.slice(start, end)
   var res = ''
   for (var i = 0; i < bytes.length; i += 2) {
-    res += String.fromCharCode(bytes[i] + bytes[i+1] * 256)
+    res += String.fromCharCode(bytes[i] + bytes[i + 1] * 256)
   }
   return res
 }
@@ -463,7 +1451,7 @@ Buffer.prototype.slice = function (start, end) {
   end = clamp(end, len, len)
 
   if (Buffer._useTypedArrays) {
-    return augment(this.subarray(start, end))
+    return Buffer._augment(this.subarray(start, end))
   } else {
     var sliceLen = end - start
     var newBuf = new Buffer(sliceLen, undefined, true)
@@ -498,7 +1486,7 @@ Buffer.prototype.readUInt8 = function (offset, noAssert) {
   return this[offset]
 }
 
-function _readUInt16 (buf, offset, littleEndian, noAssert) {
+function readUInt16 (buf, offset, littleEndian, noAssert) {
   if (!noAssert) {
     assert(typeof littleEndian === 'boolean', 'missing or invalid endian')
     assert(offset !== undefined && offset !== null, 'missing offset')
@@ -523,14 +1511,14 @@ function _readUInt16 (buf, offset, littleEndian, noAssert) {
 }
 
 Buffer.prototype.readUInt16LE = function (offset, noAssert) {
-  return _readUInt16(this, offset, true, noAssert)
+  return readUInt16(this, offset, true, noAssert)
 }
 
 Buffer.prototype.readUInt16BE = function (offset, noAssert) {
-  return _readUInt16(this, offset, false, noAssert)
+  return readUInt16(this, offset, false, noAssert)
 }
 
-function _readUInt32 (buf, offset, littleEndian, noAssert) {
+function readUInt32 (buf, offset, littleEndian, noAssert) {
   if (!noAssert) {
     assert(typeof littleEndian === 'boolean', 'missing or invalid endian')
     assert(offset !== undefined && offset !== null, 'missing offset')
@@ -563,11 +1551,11 @@ function _readUInt32 (buf, offset, littleEndian, noAssert) {
 }
 
 Buffer.prototype.readUInt32LE = function (offset, noAssert) {
-  return _readUInt32(this, offset, true, noAssert)
+  return readUInt32(this, offset, true, noAssert)
 }
 
 Buffer.prototype.readUInt32BE = function (offset, noAssert) {
-  return _readUInt32(this, offset, false, noAssert)
+  return readUInt32(this, offset, false, noAssert)
 }
 
 Buffer.prototype.readInt8 = function (offset, noAssert) {
@@ -587,7 +1575,7 @@ Buffer.prototype.readInt8 = function (offset, noAssert) {
     return this[offset]
 }
 
-function _readInt16 (buf, offset, littleEndian, noAssert) {
+function readInt16 (buf, offset, littleEndian, noAssert) {
   if (!noAssert) {
     assert(typeof littleEndian === 'boolean', 'missing or invalid endian')
     assert(offset !== undefined && offset !== null, 'missing offset')
@@ -598,7 +1586,7 @@ function _readInt16 (buf, offset, littleEndian, noAssert) {
   if (offset >= len)
     return
 
-  var val = _readUInt16(buf, offset, littleEndian, true)
+  var val = readUInt16(buf, offset, littleEndian, true)
   var neg = val & 0x8000
   if (neg)
     return (0xffff - val + 1) * -1
@@ -607,14 +1595,14 @@ function _readInt16 (buf, offset, littleEndian, noAssert) {
 }
 
 Buffer.prototype.readInt16LE = function (offset, noAssert) {
-  return _readInt16(this, offset, true, noAssert)
+  return readInt16(this, offset, true, noAssert)
 }
 
 Buffer.prototype.readInt16BE = function (offset, noAssert) {
-  return _readInt16(this, offset, false, noAssert)
+  return readInt16(this, offset, false, noAssert)
 }
 
-function _readInt32 (buf, offset, littleEndian, noAssert) {
+function readInt32 (buf, offset, littleEndian, noAssert) {
   if (!noAssert) {
     assert(typeof littleEndian === 'boolean', 'missing or invalid endian')
     assert(offset !== undefined && offset !== null, 'missing offset')
@@ -625,7 +1613,7 @@ function _readInt32 (buf, offset, littleEndian, noAssert) {
   if (offset >= len)
     return
 
-  var val = _readUInt32(buf, offset, littleEndian, true)
+  var val = readUInt32(buf, offset, littleEndian, true)
   var neg = val & 0x80000000
   if (neg)
     return (0xffffffff - val + 1) * -1
@@ -634,14 +1622,14 @@ function _readInt32 (buf, offset, littleEndian, noAssert) {
 }
 
 Buffer.prototype.readInt32LE = function (offset, noAssert) {
-  return _readInt32(this, offset, true, noAssert)
+  return readInt32(this, offset, true, noAssert)
 }
 
 Buffer.prototype.readInt32BE = function (offset, noAssert) {
-  return _readInt32(this, offset, false, noAssert)
+  return readInt32(this, offset, false, noAssert)
 }
 
-function _readFloat (buf, offset, littleEndian, noAssert) {
+function readFloat (buf, offset, littleEndian, noAssert) {
   if (!noAssert) {
     assert(typeof littleEndian === 'boolean', 'missing or invalid endian')
     assert(offset + 3 < buf.length, 'Trying to read beyond buffer length')
@@ -651,14 +1639,14 @@ function _readFloat (buf, offset, littleEndian, noAssert) {
 }
 
 Buffer.prototype.readFloatLE = function (offset, noAssert) {
-  return _readFloat(this, offset, true, noAssert)
+  return readFloat(this, offset, true, noAssert)
 }
 
 Buffer.prototype.readFloatBE = function (offset, noAssert) {
-  return _readFloat(this, offset, false, noAssert)
+  return readFloat(this, offset, false, noAssert)
 }
 
-function _readDouble (buf, offset, littleEndian, noAssert) {
+function readDouble (buf, offset, littleEndian, noAssert) {
   if (!noAssert) {
     assert(typeof littleEndian === 'boolean', 'missing or invalid endian')
     assert(offset + 7 < buf.length, 'Trying to read beyond buffer length')
@@ -668,11 +1656,11 @@ function _readDouble (buf, offset, littleEndian, noAssert) {
 }
 
 Buffer.prototype.readDoubleLE = function (offset, noAssert) {
-  return _readDouble(this, offset, true, noAssert)
+  return readDouble(this, offset, true, noAssert)
 }
 
 Buffer.prototype.readDoubleBE = function (offset, noAssert) {
-  return _readDouble(this, offset, false, noAssert)
+  return readDouble(this, offset, false, noAssert)
 }
 
 Buffer.prototype.writeUInt8 = function (value, offset, noAssert) {
@@ -686,9 +1674,10 @@ Buffer.prototype.writeUInt8 = function (value, offset, noAssert) {
   if (offset >= this.length) return
 
   this[offset] = value
+  return offset + 1
 }
 
-function _writeUInt16 (buf, value, offset, littleEndian, noAssert) {
+function writeUInt16 (buf, value, offset, littleEndian, noAssert) {
   if (!noAssert) {
     assert(value !== undefined && value !== null, 'missing value')
     assert(typeof littleEndian === 'boolean', 'missing or invalid endian')
@@ -706,17 +1695,18 @@ function _writeUInt16 (buf, value, offset, littleEndian, noAssert) {
         (value & (0xff << (8 * (littleEndian ? i : 1 - i)))) >>>
             (littleEndian ? i : 1 - i) * 8
   }
+  return offset + 2
 }
 
 Buffer.prototype.writeUInt16LE = function (value, offset, noAssert) {
-  _writeUInt16(this, value, offset, true, noAssert)
+  return writeUInt16(this, value, offset, true, noAssert)
 }
 
 Buffer.prototype.writeUInt16BE = function (value, offset, noAssert) {
-  _writeUInt16(this, value, offset, false, noAssert)
+  return writeUInt16(this, value, offset, false, noAssert)
 }
 
-function _writeUInt32 (buf, value, offset, littleEndian, noAssert) {
+function writeUInt32 (buf, value, offset, littleEndian, noAssert) {
   if (!noAssert) {
     assert(value !== undefined && value !== null, 'missing value')
     assert(typeof littleEndian === 'boolean', 'missing or invalid endian')
@@ -733,14 +1723,15 @@ function _writeUInt32 (buf, value, offset, littleEndian, noAssert) {
     buf[offset + i] =
         (value >>> (littleEndian ? i : 3 - i) * 8) & 0xff
   }
+  return offset + 4
 }
 
 Buffer.prototype.writeUInt32LE = function (value, offset, noAssert) {
-  _writeUInt32(this, value, offset, true, noAssert)
+  return writeUInt32(this, value, offset, true, noAssert)
 }
 
 Buffer.prototype.writeUInt32BE = function (value, offset, noAssert) {
-  _writeUInt32(this, value, offset, false, noAssert)
+  return writeUInt32(this, value, offset, false, noAssert)
 }
 
 Buffer.prototype.writeInt8 = function (value, offset, noAssert) {
@@ -758,9 +1749,10 @@ Buffer.prototype.writeInt8 = function (value, offset, noAssert) {
     this.writeUInt8(value, offset, noAssert)
   else
     this.writeUInt8(0xff + value + 1, offset, noAssert)
+  return offset + 1
 }
 
-function _writeInt16 (buf, value, offset, littleEndian, noAssert) {
+function writeInt16 (buf, value, offset, littleEndian, noAssert) {
   if (!noAssert) {
     assert(value !== undefined && value !== null, 'missing value')
     assert(typeof littleEndian === 'boolean', 'missing or invalid endian')
@@ -774,20 +1766,21 @@ function _writeInt16 (buf, value, offset, littleEndian, noAssert) {
     return
 
   if (value >= 0)
-    _writeUInt16(buf, value, offset, littleEndian, noAssert)
+    writeUInt16(buf, value, offset, littleEndian, noAssert)
   else
-    _writeUInt16(buf, 0xffff + value + 1, offset, littleEndian, noAssert)
+    writeUInt16(buf, 0xffff + value + 1, offset, littleEndian, noAssert)
+  return offset + 2
 }
 
 Buffer.prototype.writeInt16LE = function (value, offset, noAssert) {
-  _writeInt16(this, value, offset, true, noAssert)
+  return writeInt16(this, value, offset, true, noAssert)
 }
 
 Buffer.prototype.writeInt16BE = function (value, offset, noAssert) {
-  _writeInt16(this, value, offset, false, noAssert)
+  return writeInt16(this, value, offset, false, noAssert)
 }
 
-function _writeInt32 (buf, value, offset, littleEndian, noAssert) {
+function writeInt32 (buf, value, offset, littleEndian, noAssert) {
   if (!noAssert) {
     assert(value !== undefined && value !== null, 'missing value')
     assert(typeof littleEndian === 'boolean', 'missing or invalid endian')
@@ -801,20 +1794,21 @@ function _writeInt32 (buf, value, offset, littleEndian, noAssert) {
     return
 
   if (value >= 0)
-    _writeUInt32(buf, value, offset, littleEndian, noAssert)
+    writeUInt32(buf, value, offset, littleEndian, noAssert)
   else
-    _writeUInt32(buf, 0xffffffff + value + 1, offset, littleEndian, noAssert)
+    writeUInt32(buf, 0xffffffff + value + 1, offset, littleEndian, noAssert)
+  return offset + 4
 }
 
 Buffer.prototype.writeInt32LE = function (value, offset, noAssert) {
-  _writeInt32(this, value, offset, true, noAssert)
+  return writeInt32(this, value, offset, true, noAssert)
 }
 
 Buffer.prototype.writeInt32BE = function (value, offset, noAssert) {
-  _writeInt32(this, value, offset, false, noAssert)
+  return writeInt32(this, value, offset, false, noAssert)
 }
 
-function _writeFloat (buf, value, offset, littleEndian, noAssert) {
+function writeFloat (buf, value, offset, littleEndian, noAssert) {
   if (!noAssert) {
     assert(value !== undefined && value !== null, 'missing value')
     assert(typeof littleEndian === 'boolean', 'missing or invalid endian')
@@ -828,17 +1822,18 @@ function _writeFloat (buf, value, offset, littleEndian, noAssert) {
     return
 
   ieee754.write(buf, value, offset, littleEndian, 23, 4)
+  return offset + 4
 }
 
 Buffer.prototype.writeFloatLE = function (value, offset, noAssert) {
-  _writeFloat(this, value, offset, true, noAssert)
+  return writeFloat(this, value, offset, true, noAssert)
 }
 
 Buffer.prototype.writeFloatBE = function (value, offset, noAssert) {
-  _writeFloat(this, value, offset, false, noAssert)
+  return writeFloat(this, value, offset, false, noAssert)
 }
 
-function _writeDouble (buf, value, offset, littleEndian, noAssert) {
+function writeDouble (buf, value, offset, littleEndian, noAssert) {
   if (!noAssert) {
     assert(value !== undefined && value !== null, 'missing value')
     assert(typeof littleEndian === 'boolean', 'missing or invalid endian')
@@ -853,14 +1848,15 @@ function _writeDouble (buf, value, offset, littleEndian, noAssert) {
     return
 
   ieee754.write(buf, value, offset, littleEndian, 52, 8)
+  return offset + 8
 }
 
 Buffer.prototype.writeDoubleLE = function (value, offset, noAssert) {
-  _writeDouble(this, value, offset, true, noAssert)
+  return writeDouble(this, value, offset, true, noAssert)
 }
 
 Buffer.prototype.writeDoubleBE = function (value, offset, noAssert) {
-  _writeDouble(this, value, offset, false, noAssert)
+  return writeDouble(this, value, offset, false, noAssert)
 }
 
 // fill(value, start=0, end=buffer.length)
@@ -869,11 +1865,6 @@ Buffer.prototype.fill = function (value, start, end) {
   if (!start) start = 0
   if (!end) end = this.length
 
-  if (typeof value === 'string') {
-    value = value.charCodeAt(0)
-  }
-
-  assert(typeof value === 'number' && !isNaN(value), 'value is not a number')
   assert(end >= start, 'end < start')
 
   // Fill 0 bytes; we're done
@@ -883,9 +1874,20 @@ Buffer.prototype.fill = function (value, start, end) {
   assert(start >= 0 && start < this.length, 'start out of bounds')
   assert(end >= 0 && end <= this.length, 'end out of bounds')
 
-  for (var i = start; i < end; i++) {
-    this[i] = value
+  var i
+  if (typeof value === 'number') {
+    for (i = start; i < end; i++) {
+      this[i] = value
+    }
+  } else {
+    var bytes = utf8ToBytes(value.toString())
+    var len = bytes.length
+    for (i = start; i < end; i++) {
+      this[i] = bytes[i % len]
+    }
   }
+
+  return this
 }
 
 Buffer.prototype.inspect = function () {
@@ -906,13 +1908,14 @@ Buffer.prototype.inspect = function () {
  * Added in Node 0.12. Only available in browsers that support ArrayBuffer.
  */
 Buffer.prototype.toArrayBuffer = function () {
-  if (typeof Uint8Array === 'function') {
+  if (typeof Uint8Array !== 'undefined') {
     if (Buffer._useTypedArrays) {
       return (new Buffer(this)).buffer
     } else {
       var buf = new Uint8Array(this.length)
-      for (var i = 0, len = buf.length; i < len; i += 1)
+      for (var i = 0, len = buf.length; i < len; i += 1) {
         buf[i] = this[i]
+      }
       return buf.buffer
     }
   } else {
@@ -923,17 +1926,12 @@ Buffer.prototype.toArrayBuffer = function () {
 // HELPER FUNCTIONS
 // ================
 
-function stringtrim (str) {
-  if (str.trim) return str.trim()
-  return str.replace(/^\s+|\s+$/g, '')
-}
-
 var BP = Buffer.prototype
 
 /**
- * Augment the Uint8Array *instance* (not the class!) with Buffer methods
+ * Augment a Uint8Array *instance* (not the Uint8Array class!) with Buffer methods
  */
-function augment (arr) {
+Buffer._augment = function (arr) {
   arr._isBuffer = true
 
   // save reference to original Uint8Array get/set methods before overwriting
@@ -948,6 +1946,8 @@ function augment (arr) {
   arr.toString = BP.toString
   arr.toLocaleString = BP.toString
   arr.toJSON = BP.toJSON
+  arr.equals = BP.equals
+  arr.compare = BP.compare
   arr.copy = BP.copy
   arr.slice = BP.slice
   arr.readUInt8 = BP.readUInt8
@@ -983,6 +1983,11 @@ function augment (arr) {
   arr.toArrayBuffer = BP.toArrayBuffer
 
   return arr
+}
+
+function stringtrim (str) {
+  if (str.trim) return str.trim()
+  return str.replace(/^\s+|\s+$/g, '')
 }
 
 // slice(start, end)
@@ -1025,14 +2030,15 @@ function utf8ToBytes (str) {
   var byteArray = []
   for (var i = 0; i < str.length; i++) {
     var b = str.charCodeAt(i)
-    if (b <= 0x7F)
-      byteArray.push(str.charCodeAt(i))
-    else {
+    if (b <= 0x7F) {
+      byteArray.push(b)
+    } else {
       var start = i
       if (b >= 0xD800 && b <= 0xDFFF) i++
       var h = encodeURIComponent(str.slice(start, i+1)).substr(1).split('%')
-      for (var j = 0; j < h.length; j++)
+      for (var j = 0; j < h.length; j++) {
         byteArray.push(parseInt(h[j], 16))
+      }
     }
   }
   return byteArray
@@ -1066,7 +2072,6 @@ function base64ToBytes (str) {
 }
 
 function blitBuffer (src, dst, offset, length) {
-  var pos
   for (var i = 0; i < length; i++) {
     if ((i + offset >= dst.length) || (i >= src.length))
       break
@@ -1090,8 +2095,7 @@ function decodeUtf8Char (str) {
  */
 function verifuint (value, max) {
   assert(typeof value === 'number', 'cannot write a non-number as a number')
-  assert(value >= 0,
-      'specified a negative value for writing an unsigned value')
+  assert(value >= 0, 'specified a negative value for writing an unsigned value')
   assert(value <= max, 'value is larger than maximum value for type')
   assert(Math.floor(value) === value, 'value has a fractional component')
 }
@@ -1113,7 +2117,7 @@ function assert (test, message) {
   if (!test) throw new Error(message || 'Failed assertion')
 }
 
-},{"base64-js":3,"ieee754":4}],3:[function(require,module,exports){
+},{"base64-js":13,"ieee754":14}],13:[function(require,module,exports){
 var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 ;(function (exports) {
@@ -1236,7 +2240,7 @@ var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 	module.exports.fromByteArray = uint8ToBase64
 }())
 
-},{}],4:[function(require,module,exports){
+},{}],14:[function(require,module,exports){
 exports.read = function(buffer, offset, isLE, mLen, nBytes) {
   var e, m,
       eLen = nBytes * 8 - mLen - 1,
@@ -1322,7 +2326,7 @@ exports.write = function(buffer, value, offset, isLE, mLen, nBytes) {
   buffer[offset + i - d] |= s * 128;
 };
 
-},{}],5:[function(require,module,exports){
+},{}],15:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -1470,7 +2474,10 @@ EventEmitter.prototype.addListener = function(type, listener) {
                     'leak detected. %d listeners added. ' +
                     'Use emitter.setMaxListeners() to increase limit.',
                     this._events[type].length);
-      console.trace();
+      if (typeof console.trace === 'function') {
+        // not supported in IE 10
+        console.trace();
+      }
     }
   }
 
@@ -1624,7 +2631,7 @@ function isUndefined(arg) {
   return arg === void 0;
 }
 
-},{}],6:[function(require,module,exports){
+},{}],16:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -1649,7 +2656,7 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],7:[function(require,module,exports){
+},{}],17:[function(require,module,exports){
 // shim for using process in browser
 
 var process = module.exports = {};
@@ -1694,6 +2701,16 @@ process.browser = true;
 process.env = {};
 process.argv = [];
 
+function noop() {}
+
+process.on = noop;
+process.addListener = noop;
+process.once = noop;
+process.off = noop;
+process.removeListener = noop;
+process.removeAllListeners = noop;
+process.emit = noop;
+
 process.binding = function (name) {
     throw new Error('process.binding is not supported');
 }
@@ -1704,7 +2721,11 @@ process.chdir = function (dir) {
     throw new Error('process.chdir is not supported');
 };
 
-},{}],8:[function(require,module,exports){
+},{}],18:[function(require,module,exports){
+module.exports = require("./lib/_stream_duplex.js")
+
+},{"./lib/_stream_duplex.js":19}],19:[function(require,module,exports){
+(function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -1732,16 +2753,30 @@ process.chdir = function (dir) {
 // Writable.
 
 module.exports = Duplex;
-var inherits = require('inherits');
-var setImmediate = require('process/browser.js').nextTick;
-var Readable = require('./readable.js');
-var Writable = require('./writable.js');
 
-inherits(Duplex, Readable);
+/*<replacement>*/
+var objectKeys = Object.keys || function (obj) {
+  var keys = [];
+  for (var key in obj) keys.push(key);
+  return keys;
+}
+/*</replacement>*/
 
-Duplex.prototype.write = Writable.prototype.write;
-Duplex.prototype.end = Writable.prototype.end;
-Duplex.prototype._write = Writable.prototype._write;
+
+/*<replacement>*/
+var util = require('core-util-is');
+util.inherits = require('inherits');
+/*</replacement>*/
+
+var Readable = require('./_stream_readable');
+var Writable = require('./_stream_writable');
+
+util.inherits(Duplex, Readable);
+
+forEach(objectKeys(Writable.prototype), function(method) {
+  if (!Duplex.prototype[method])
+    Duplex.prototype[method] = Writable.prototype[method];
+});
 
 function Duplex(options) {
   if (!(this instanceof Duplex))
@@ -1772,144 +2807,17 @@ function onend() {
 
   // no more data can be written.
   // But allow more writes to happen in this tick.
-  var self = this;
-  setImmediate(function () {
-    self.end();
-  });
+  process.nextTick(this.end.bind(this));
 }
 
-},{"./readable.js":12,"./writable.js":14,"inherits":6,"process/browser.js":10}],9:[function(require,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-module.exports = Stream;
-
-var EE = require('events').EventEmitter;
-var inherits = require('inherits');
-
-inherits(Stream, EE);
-Stream.Readable = require('./readable.js');
-Stream.Writable = require('./writable.js');
-Stream.Duplex = require('./duplex.js');
-Stream.Transform = require('./transform.js');
-Stream.PassThrough = require('./passthrough.js');
-
-// Backwards-compat with node 0.4.x
-Stream.Stream = Stream;
-
-
-
-// old-style streams.  Note that the pipe method (the only relevant
-// part of this class) is overridden in the Readable class.
-
-function Stream() {
-  EE.call(this);
+function forEach (xs, f) {
+  for (var i = 0, l = xs.length; i < l; i++) {
+    f(xs[i], i);
+  }
 }
 
-Stream.prototype.pipe = function(dest, options) {
-  var source = this;
-
-  function ondata(chunk) {
-    if (dest.writable) {
-      if (false === dest.write(chunk) && source.pause) {
-        source.pause();
-      }
-    }
-  }
-
-  source.on('data', ondata);
-
-  function ondrain() {
-    if (source.readable && source.resume) {
-      source.resume();
-    }
-  }
-
-  dest.on('drain', ondrain);
-
-  // If the 'end' option is not supplied, dest.end() will be called when
-  // source gets the 'end' or 'close' events.  Only dest.end() once.
-  if (!dest._isStdio && (!options || options.end !== false)) {
-    source.on('end', onend);
-    source.on('close', onclose);
-  }
-
-  var didOnEnd = false;
-  function onend() {
-    if (didOnEnd) return;
-    didOnEnd = true;
-
-    dest.end();
-  }
-
-
-  function onclose() {
-    if (didOnEnd) return;
-    didOnEnd = true;
-
-    if (typeof dest.destroy === 'function') dest.destroy();
-  }
-
-  // don't leave dangling pipes when there are errors.
-  function onerror(er) {
-    cleanup();
-    if (EE.listenerCount(this, 'error') === 0) {
-      throw er; // Unhandled stream error in pipe.
-    }
-  }
-
-  source.on('error', onerror);
-  dest.on('error', onerror);
-
-  // remove all the event listeners that were added.
-  function cleanup() {
-    source.removeListener('data', ondata);
-    dest.removeListener('drain', ondrain);
-
-    source.removeListener('end', onend);
-    source.removeListener('close', onclose);
-
-    source.removeListener('error', onerror);
-    dest.removeListener('error', onerror);
-
-    source.removeListener('end', cleanup);
-    source.removeListener('close', cleanup);
-
-    dest.removeListener('close', cleanup);
-  }
-
-  source.on('end', cleanup);
-  source.on('close', cleanup);
-
-  dest.on('close', cleanup);
-
-  dest.emit('pipe', source);
-
-  // Allow for unix-like usage: A.pipe(B).pipe(C)
-  return dest;
-};
-
-},{"./duplex.js":8,"./passthrough.js":11,"./readable.js":12,"./transform.js":13,"./writable.js":14,"events":5,"inherits":6}],10:[function(require,module,exports){
-module.exports=require(7)
-},{}],11:[function(require,module,exports){
+}).call(this,require("FWaASH"))
+},{"./_stream_readable":21,"./_stream_writable":23,"FWaASH":17,"core-util-is":24,"inherits":16}],20:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -1937,9 +2845,14 @@ module.exports=require(7)
 
 module.exports = PassThrough;
 
-var Transform = require('./transform.js');
-var inherits = require('inherits');
-inherits(PassThrough, Transform);
+var Transform = require('./_stream_transform');
+
+/*<replacement>*/
+var util = require('core-util-is');
+util.inherits = require('inherits');
+/*</replacement>*/
+
+util.inherits(PassThrough, Transform);
 
 function PassThrough(options) {
   if (!(this instanceof PassThrough))
@@ -1952,7 +2865,7 @@ PassThrough.prototype._transform = function(chunk, encoding, cb) {
   cb(null, chunk);
 };
 
-},{"./transform.js":13,"inherits":6}],12:[function(require,module,exports){
+},{"./_stream_transform":22,"core-util-is":24,"inherits":16}],21:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -1976,16 +2889,36 @@ PassThrough.prototype._transform = function(chunk, encoding, cb) {
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 module.exports = Readable;
+
+/*<replacement>*/
+var isArray = require('isarray');
+/*</replacement>*/
+
+
+/*<replacement>*/
+var Buffer = require('buffer').Buffer;
+/*</replacement>*/
+
 Readable.ReadableState = ReadableState;
 
 var EE = require('events').EventEmitter;
-var Stream = require('./index.js');
-var Buffer = require('buffer').Buffer;
-var setImmediate = require('process/browser.js').nextTick;
+
+/*<replacement>*/
+if (!EE.listenerCount) EE.listenerCount = function(emitter, type) {
+  return emitter.listeners(type).length;
+};
+/*</replacement>*/
+
+var Stream = require('stream');
+
+/*<replacement>*/
+var util = require('core-util-is');
+util.inherits = require('inherits');
+/*</replacement>*/
+
 var StringDecoder;
 
-var inherits = require('inherits');
-inherits(Readable, Stream);
+util.inherits(Readable, Stream);
 
 function ReadableState(options, stream) {
   options = options || {};
@@ -2049,7 +2982,7 @@ function ReadableState(options, stream) {
   this.encoding = null;
   if (options.encoding) {
     if (!StringDecoder)
-      StringDecoder = require('string_decoder').StringDecoder;
+      StringDecoder = require('string_decoder/').StringDecoder;
     this.decoder = new StringDecoder(options.encoding);
     this.encoding = options.encoding;
   }
@@ -2150,7 +3083,7 @@ function needMoreData(state) {
 // backwards compatibility.
 Readable.prototype.setEncoding = function(enc) {
   if (!StringDecoder)
-    StringDecoder = require('string_decoder').StringDecoder;
+    StringDecoder = require('string_decoder/').StringDecoder;
   this._readableState.decoder = new StringDecoder(enc);
   this._readableState.encoding = enc;
 };
@@ -2355,7 +3288,7 @@ function emitReadable(stream) {
 
   state.emittedReadable = true;
   if (state.sync)
-    setImmediate(function() {
+    process.nextTick(function() {
       emitReadable_(stream);
     });
   else
@@ -2376,7 +3309,7 @@ function emitReadable_(stream) {
 function maybeReadMore(stream, state) {
   if (!state.readingMore) {
     state.readingMore = true;
-    setImmediate(function() {
+    process.nextTick(function() {
       maybeReadMore_(stream, state);
     });
   }
@@ -2427,7 +3360,7 @@ Readable.prototype.pipe = function(dest, pipeOpts) {
 
   var endFn = doEnd ? onend : cleanup;
   if (state.endEmitted)
-    setImmediate(endFn);
+    process.nextTick(endFn);
   else
     src.once('end', endFn);
 
@@ -2469,14 +3402,22 @@ Readable.prototype.pipe = function(dest, pipeOpts) {
 
   // if the dest has an error, then stop piping into it.
   // however, don't suppress the throwing behavior for this.
-  // check for listeners before emit removes one-time listeners.
-  var errListeners = EE.listenerCount(dest, 'error');
   function onerror(er) {
     unpipe();
-    if (errListeners === 0 && EE.listenerCount(dest, 'error') === 0)
+    dest.removeListener('error', onerror);
+    if (EE.listenerCount(dest, 'error') === 0)
       dest.emit('error', er);
   }
-  dest.once('error', onerror);
+  // This is a brutally ugly hack to make sure that our error handler
+  // is attached before any userland ones.  NEVER DO THIS.
+  if (!dest._events || !dest._events.error)
+    dest.on('error', onerror);
+  else if (isArray(dest._events.error))
+    dest._events.error.unshift(onerror);
+  else
+    dest._events.error = [onerror, dest._events.error];
+
+
 
   // Both close and finish should trigger unpipe, but only once.
   function onclose() {
@@ -2506,7 +3447,7 @@ Readable.prototype.pipe = function(dest, pipeOpts) {
     this.on('readable', pipeOnReadable);
 
     state.flowing = true;
-    setImmediate(function() {
+    process.nextTick(function() {
       flow(src);
     });
   }
@@ -2709,7 +3650,7 @@ function emitDataEvents(stream, startPaused) {
   stream.resume = function() {
     paused = false;
     if (readable)
-      setImmediate(function() {
+      process.nextTick(function() {
         stream.emit('readable');
       });
     else
@@ -2766,9 +3707,7 @@ Readable.prototype.wrap = function(stream) {
   // proxy certain important events.
   var events = ['error', 'close', 'destroy', 'pause', 'resume'];
   forEach(events, function(ev) {
-    stream.on(ev, function (x) {
-      return self.emit.apply(self, ev, x);
-    });
+    stream.on(ev, self.emit.bind(self, ev));
   });
 
   // when we try to consume some more bytes, simply unpause the
@@ -2864,7 +3803,7 @@ function endReadable(stream) {
 
   if (!state.endEmitted && state.calledRead) {
     state.ended = true;
-    setImmediate(function() {
+    process.nextTick(function() {
       // Check that we didn't get one last unshift.
       if (!state.endEmitted && state.length === 0) {
         state.endEmitted = true;
@@ -2888,8 +3827,8 @@ function indexOf (xs, x) {
   return -1;
 }
 
-}).call(this,require("/home/pierre/lib/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"))
-},{"./index.js":9,"/home/pierre/lib/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":7,"buffer":"xx9DpU","events":5,"inherits":6,"process/browser.js":10,"string_decoder":15}],13:[function(require,module,exports){
+}).call(this,require("FWaASH"))
+},{"FWaASH":17,"buffer":"cTGqya","core-util-is":24,"events":15,"inherits":16,"isarray":25,"stream":31,"string_decoder/":26}],22:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -2910,6 +3849,7 @@ function indexOf (xs, x) {
 // DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 
 // a transform stream is a readable/writable stream where you do
 // something with the data.  Sometimes it's called a "filter",
@@ -2955,9 +3895,14 @@ function indexOf (xs, x) {
 
 module.exports = Transform;
 
-var Duplex = require('./duplex.js');
-var inherits = require('inherits');
-inherits(Transform, Duplex);
+var Duplex = require('./_stream_duplex');
+
+/*<replacement>*/
+var util = require('core-util-is');
+util.inherits = require('inherits');
+/*</replacement>*/
+
+util.inherits(Transform, Duplex);
 
 
 function TransformState(options, stream) {
@@ -3065,7 +4010,7 @@ Transform.prototype._write = function(chunk, encoding, cb) {
 Transform.prototype._read = function(n) {
   var ts = this._transformState;
 
-  if (ts.writechunk && ts.writecb && !ts.transforming) {
+  if (ts.writechunk !== null && ts.writecb && !ts.transforming) {
     ts.transforming = true;
     this._transform(ts.writechunk, ts.writeencoding, ts.afterTransform);
   } else {
@@ -3095,7 +4040,8 @@ function done(stream, er) {
   return stream.push(null);
 }
 
-},{"./duplex.js":8,"inherits":6}],14:[function(require,module,exports){
+},{"./_stream_duplex":19,"core-util-is":24,"inherits":16}],23:[function(require,module,exports){
+(function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -3122,27 +4068,23 @@ function done(stream, er) {
 // the drain event emission and buffering.
 
 module.exports = Writable;
+
+/*<replacement>*/
+var Buffer = require('buffer').Buffer;
+/*</replacement>*/
+
 Writable.WritableState = WritableState;
 
-var isUint8Array = typeof Uint8Array !== 'undefined'
-  ? function (x) { return x instanceof Uint8Array }
-  : function (x) {
-    return x && x.constructor && x.constructor.name === 'Uint8Array'
-  }
-;
-var isArrayBuffer = typeof ArrayBuffer !== 'undefined'
-  ? function (x) { return x instanceof ArrayBuffer }
-  : function (x) {
-    return x && x.constructor && x.constructor.name === 'ArrayBuffer'
-  }
-;
 
-var inherits = require('inherits');
-var Stream = require('./index.js');
-var setImmediate = require('process/browser.js').nextTick;
-var Buffer = require('buffer').Buffer;
+/*<replacement>*/
+var util = require('core-util-is');
+util.inherits = require('inherits');
+/*</replacement>*/
 
-inherits(Writable, Stream);
+
+var Stream = require('stream');
+
+util.inherits(Writable, Stream);
 
 function WriteReq(chunk, encoding, cb) {
   this.chunk = chunk;
@@ -3216,12 +4158,17 @@ function WritableState(options, stream) {
   this.writelen = 0;
 
   this.buffer = [];
+
+  // True if the error was already emitted and should not be thrown again
+  this.errorEmitted = false;
 }
 
 function Writable(options) {
+  var Duplex = require('./_stream_duplex');
+
   // Writable ctor is applied to Duplexes, though they're not
   // instanceof Writable, they're instanceof Readable.
-  if (!(this instanceof Writable) && !(this instanceof Stream.Duplex))
+  if (!(this instanceof Writable) && !(this instanceof Duplex))
     return new Writable(options);
 
   this._writableState = new WritableState(options, this);
@@ -3242,7 +4189,7 @@ function writeAfterEnd(stream, state, cb) {
   var er = new Error('write after end');
   // TODO: defer error events consistently everywhere, not just the cb
   stream.emit('error', er);
-  setImmediate(function() {
+  process.nextTick(function() {
     cb(er);
   });
 }
@@ -3261,7 +4208,7 @@ function validChunk(stream, state, chunk, cb) {
       !state.objectMode) {
     var er = new TypeError('Invalid non-string/buffer chunk');
     stream.emit('error', er);
-    setImmediate(function() {
+    process.nextTick(function() {
       cb(er);
     });
     valid = false;
@@ -3278,11 +4225,6 @@ Writable.prototype.write = function(chunk, encoding, cb) {
     encoding = null;
   }
 
-  if (!Buffer.isBuffer(chunk) && isUint8Array(chunk))
-    chunk = new Buffer(chunk);
-  if (isArrayBuffer(chunk) && typeof Uint8Array !== 'undefined')
-    chunk = new Buffer(new Uint8Array(chunk));
-  
   if (Buffer.isBuffer(chunk))
     encoding = 'buffer';
   else if (!encoding)
@@ -3313,12 +4255,16 @@ function decodeChunk(state, chunk, encoding) {
 // If we return false, then we need a drain event, so set that flag.
 function writeOrBuffer(stream, state, chunk, encoding, cb) {
   chunk = decodeChunk(state, chunk, encoding);
+  if (Buffer.isBuffer(chunk))
+    encoding = 'buffer';
   var len = state.objectMode ? 1 : chunk.length;
 
   state.length += len;
 
   var ret = state.length < state.highWaterMark;
-  state.needDrain = !ret;
+  // we must ensure that previous needDrain will not be reset to false.
+  if (!ret)
+    state.needDrain = true;
 
   if (state.writing)
     state.buffer.push(new WriteReq(chunk, encoding, cb));
@@ -3339,12 +4285,13 @@ function doWrite(stream, state, len, chunk, encoding, cb) {
 
 function onwriteError(stream, state, sync, er, cb) {
   if (sync)
-    setImmediate(function() {
+    process.nextTick(function() {
       cb(er);
     });
   else
     cb(er);
 
+  stream._writableState.errorEmitted = true;
   stream.emit('error', er);
 }
 
@@ -3372,7 +4319,7 @@ function onwrite(stream, er) {
       clearBuffer(stream, state);
 
     if (sync) {
-      setImmediate(function() {
+      process.nextTick(function() {
         afterWrite(stream, state, finished, cb);
       });
     } else {
@@ -3476,14 +4423,130 @@ function endWritable(stream, state, cb) {
   finishMaybe(stream, state);
   if (cb) {
     if (state.finished)
-      setImmediate(cb);
+      process.nextTick(cb);
     else
       stream.once('finish', cb);
   }
   state.ended = true;
 }
 
-},{"./index.js":9,"buffer":"xx9DpU","inherits":6,"process/browser.js":10}],15:[function(require,module,exports){
+}).call(this,require("FWaASH"))
+},{"./_stream_duplex":19,"FWaASH":17,"buffer":"cTGqya","core-util-is":24,"inherits":16,"stream":31}],24:[function(require,module,exports){
+(function (Buffer){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+// NOTE: These type checking functions intentionally don't use `instanceof`
+// because it is fragile and can be easily faked with `Object.create()`.
+function isArray(ar) {
+  return Array.isArray(ar);
+}
+exports.isArray = isArray;
+
+function isBoolean(arg) {
+  return typeof arg === 'boolean';
+}
+exports.isBoolean = isBoolean;
+
+function isNull(arg) {
+  return arg === null;
+}
+exports.isNull = isNull;
+
+function isNullOrUndefined(arg) {
+  return arg == null;
+}
+exports.isNullOrUndefined = isNullOrUndefined;
+
+function isNumber(arg) {
+  return typeof arg === 'number';
+}
+exports.isNumber = isNumber;
+
+function isString(arg) {
+  return typeof arg === 'string';
+}
+exports.isString = isString;
+
+function isSymbol(arg) {
+  return typeof arg === 'symbol';
+}
+exports.isSymbol = isSymbol;
+
+function isUndefined(arg) {
+  return arg === void 0;
+}
+exports.isUndefined = isUndefined;
+
+function isRegExp(re) {
+  return isObject(re) && objectToString(re) === '[object RegExp]';
+}
+exports.isRegExp = isRegExp;
+
+function isObject(arg) {
+  return typeof arg === 'object' && arg !== null;
+}
+exports.isObject = isObject;
+
+function isDate(d) {
+  return isObject(d) && objectToString(d) === '[object Date]';
+}
+exports.isDate = isDate;
+
+function isError(e) {
+  return isObject(e) &&
+      (objectToString(e) === '[object Error]' || e instanceof Error);
+}
+exports.isError = isError;
+
+function isFunction(arg) {
+  return typeof arg === 'function';
+}
+exports.isFunction = isFunction;
+
+function isPrimitive(arg) {
+  return arg === null ||
+         typeof arg === 'boolean' ||
+         typeof arg === 'number' ||
+         typeof arg === 'string' ||
+         typeof arg === 'symbol' ||  // ES6 symbol
+         typeof arg === 'undefined';
+}
+exports.isPrimitive = isPrimitive;
+
+function isBuffer(arg) {
+  return Buffer.isBuffer(arg);
+}
+exports.isBuffer = isBuffer;
+
+function objectToString(o) {
+  return Object.prototype.toString.call(o);
+}
+}).call(this,require("buffer").Buffer)
+},{"buffer":"cTGqya"}],25:[function(require,module,exports){
+module.exports = Array.isArray || function (arr) {
+  return Object.prototype.toString.call(arr) == '[object Array]';
+};
+
+},{}],26:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -3507,8 +4570,17 @@ function endWritable(stream, state, cb) {
 
 var Buffer = require('buffer').Buffer;
 
+var isBufferEncoding = Buffer.isEncoding
+  || function(encoding) {
+       switch (encoding && encoding.toLowerCase()) {
+         case 'hex': case 'utf8': case 'utf-8': case 'ascii': case 'binary': case 'base64': case 'ucs2': case 'ucs-2': case 'utf16le': case 'utf-16le': case 'raw': return true;
+         default: return false;
+       }
+     }
+
+
 function assertEncoding(encoding) {
-  if (encoding && !Buffer.isEncoding(encoding)) {
+  if (encoding && !isBufferEncoding(encoding)) {
     throw new Error('Unknown encoding: ' + encoding);
   }
 }
@@ -3676,14 +4748,160 @@ function base64DetectIncompleteChar(buffer) {
   return incomplete;
 }
 
-},{"buffer":"xx9DpU"}],16:[function(require,module,exports){
+},{"buffer":"cTGqya"}],27:[function(require,module,exports){
+module.exports = require("./lib/_stream_passthrough.js")
+
+},{"./lib/_stream_passthrough.js":20}],28:[function(require,module,exports){
+exports = module.exports = require('./lib/_stream_readable.js');
+exports.Readable = exports;
+exports.Writable = require('./lib/_stream_writable.js');
+exports.Duplex = require('./lib/_stream_duplex.js');
+exports.Transform = require('./lib/_stream_transform.js');
+exports.PassThrough = require('./lib/_stream_passthrough.js');
+
+},{"./lib/_stream_duplex.js":19,"./lib/_stream_passthrough.js":20,"./lib/_stream_readable.js":21,"./lib/_stream_transform.js":22,"./lib/_stream_writable.js":23}],29:[function(require,module,exports){
+module.exports = require("./lib/_stream_transform.js")
+
+},{"./lib/_stream_transform.js":22}],30:[function(require,module,exports){
+module.exports = require("./lib/_stream_writable.js")
+
+},{"./lib/_stream_writable.js":23}],31:[function(require,module,exports){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+module.exports = Stream;
+
+var EE = require('events').EventEmitter;
+var inherits = require('inherits');
+
+inherits(Stream, EE);
+Stream.Readable = require('readable-stream/readable.js');
+Stream.Writable = require('readable-stream/writable.js');
+Stream.Duplex = require('readable-stream/duplex.js');
+Stream.Transform = require('readable-stream/transform.js');
+Stream.PassThrough = require('readable-stream/passthrough.js');
+
+// Backwards-compat with node 0.4.x
+Stream.Stream = Stream;
+
+
+
+// old-style streams.  Note that the pipe method (the only relevant
+// part of this class) is overridden in the Readable class.
+
+function Stream() {
+  EE.call(this);
+}
+
+Stream.prototype.pipe = function(dest, options) {
+  var source = this;
+
+  function ondata(chunk) {
+    if (dest.writable) {
+      if (false === dest.write(chunk) && source.pause) {
+        source.pause();
+      }
+    }
+  }
+
+  source.on('data', ondata);
+
+  function ondrain() {
+    if (source.readable && source.resume) {
+      source.resume();
+    }
+  }
+
+  dest.on('drain', ondrain);
+
+  // If the 'end' option is not supplied, dest.end() will be called when
+  // source gets the 'end' or 'close' events.  Only dest.end() once.
+  if (!dest._isStdio && (!options || options.end !== false)) {
+    source.on('end', onend);
+    source.on('close', onclose);
+  }
+
+  var didOnEnd = false;
+  function onend() {
+    if (didOnEnd) return;
+    didOnEnd = true;
+
+    dest.end();
+  }
+
+
+  function onclose() {
+    if (didOnEnd) return;
+    didOnEnd = true;
+
+    if (typeof dest.destroy === 'function') dest.destroy();
+  }
+
+  // don't leave dangling pipes when there are errors.
+  function onerror(er) {
+    cleanup();
+    if (EE.listenerCount(this, 'error') === 0) {
+      throw er; // Unhandled stream error in pipe.
+    }
+  }
+
+  source.on('error', onerror);
+  dest.on('error', onerror);
+
+  // remove all the event listeners that were added.
+  function cleanup() {
+    source.removeListener('data', ondata);
+    dest.removeListener('drain', ondrain);
+
+    source.removeListener('end', onend);
+    source.removeListener('close', onclose);
+
+    source.removeListener('error', onerror);
+    dest.removeListener('error', onerror);
+
+    source.removeListener('end', cleanup);
+    source.removeListener('close', cleanup);
+
+    dest.removeListener('close', cleanup);
+  }
+
+  source.on('end', cleanup);
+  source.on('close', cleanup);
+
+  dest.on('close', cleanup);
+
+  dest.emit('pipe', source);
+
+  // Allow for unix-like usage: A.pipe(B).pipe(C)
+  return dest;
+};
+
+},{"events":15,"inherits":16,"readable-stream/duplex.js":18,"readable-stream/passthrough.js":27,"readable-stream/readable.js":28,"readable-stream/transform.js":29,"readable-stream/writable.js":30}],32:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],17:[function(require,module,exports){
+},{}],33:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -4272,978 +5490,11 @@ function hasOwnProperty(obj, prop) {
   return Object.prototype.hasOwnProperty.call(obj, prop);
 }
 
-}).call(this,require("/home/pierre/lib/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js"),typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":16,"/home/pierre/lib/node_modules/browserify/node_modules/insert-module-globals/node_modules/process/browser.js":7,"inherits":6}],18:[function(require,module,exports){
-/**
-	Javascript version of the key LZ4 C functions
- */
-var uint32 = require('cuint').UINT32
-
-/**
- * Decode a block. Assumptions: input contains all sequences of a 
- * chunk, output is large enough to receive the decoded data.
- * If the output buffer is too small, an error will be thrown.
- * If the returned value is negative, an error occured at the returned offset.
- *
- * @param input {Buffer} input data
- * @param output {Buffer} output data
- * @return {Number} number of decoded bytes
- * @private
- */
-exports.uncompress = function (input, output) {
-	// Process each sequence in the incoming data
-	for (var i = 0, n = input.length, j = 0; i < n;) {
-		var token = input[i++]
-
-		// Literals
-		var literals_length = (token >> 4)
-		if (literals_length > 0) {
-			// length of literals
-			var l = literals_length + 240
-			while (l === 255) {
-				l = input[i++]
-				literals_length += l
-			}
-
-			// Copy the literals
-			var end = i + literals_length
-			while (i < end) output[j++] = input[i++]
-
-			// End of buffer?
-			if (i === n) return j
-		}
-
-		// Match copy
-		// 2 bytes offset (little endian)
-		var offset = input[i++] | (input[i++] << 8)
-
-		// 0 is an invalid offset value
-		if (offset === 0 || offset > j) return -(i-2)
-
-		// length of match copy
-		var match_length = (token & 0xf)
-		var l = match_length + 240
-		while (l === 255) {
-			l = input[i++]
-			match_length += l
-		}
-
-		// Copy the match
-		var pos = j - offset // position of the match copy in the current output
-		var end = j + match_length + 4 // minmatch = 4
-		while (j < end) output[j++] = output[pos++]
-	}
-
-	return j
-}
-
-var
-	maxInputSize	= 0x7E000000
-,	minMatch		= 4
-// uint32() optimization
-,	hashLog			= 16
-,	hashShift		= (minMatch * 8) - hashLog
-,	hashSize		= 1 << hashLog
-
-,	copyLength		= 8
-,	lastLiterals	= 5
-,	mfLimit			= copyLength + minMatch
-,	skipStrength	= 6
-
-,	mlBits  		= 4
-,	mlMask  		= (1 << mlBits) - 1
-,	runBits 		= 8 - mlBits
-,	runMask 		= (1 << runBits) - 1
-
-,	hasher 			= uint32(2654435761)
-
-// CompressBound returns the maximum length of a lz4 block, given it's uncompressed length
-exports.compressBound = function (isize) {
-	return isize > maxInputSize
-		? 0
-		: (isize + (isize/255) + 16) | 0
-}
-
-exports.compressHC = exports.compress
-
-exports.compress = function (src, dst) {
-	// V8 optimization: non sparse array with integers
-	var hashTable = new Array(hashSize)
-	for (var i = 0; i < hashSize; i++) {
-		hashTable[i] = 0
-	}
-	return compressBlock(src, dst, 0, hashTable)
-}
-
-exports.compressDependent = compressBlock
-
-function compressBlock (src, dst, pos, hashTable) {
-	var Hash = uint32() // Reusable unsigned 32 bits integer
-	var dpos = 0
-	var anchor = 0
-
-	if (src.length >= maxInputSize) throw new Error("input too large")
-
-	// Minimum of input bytes for compression (LZ4 specs)
-	if (src.length > mfLimit) {
-		var n = exports.compressBound(src.length)
-		if ( dst.length < n ) throw Error("output too small: " + dst.length + " < " + n)
-
-		var 
-			step  = 1
-		,	findMatchAttempts = (1 << skipStrength) + 3
-		// Keep last few bytes incompressible (LZ4 specs):
-		// last 5 bytes must be literals
-		,	srcLength = src.length - mfLimit
-
-		while (pos + minMatch < srcLength) {
-			// Find a match
-			// min match of 4 bytes aka sequence
-			var sequenceLowBits = src[pos+1]<<8 | src[pos]
-			var sequenceHighBits = src[pos+3]<<8 | src[pos+2]
-			// compute hash for the current sequence
-			var hash = Hash.fromBits(sequenceLowBits, sequenceHighBits)
-							.multiply(hasher)
-							.shiftr(hashShift)
-							.toNumber()
-			// get the position of the sequence matching the hash
-			// NB. since 2 different sequences may have the same hash
-			// it is double-checked below
-			// do -1 to distinguish between initialized and uninitialized values
-			var ref = hashTable[hash] - 1
-			// save position of current sequence in hash table
-			hashTable[hash] = pos + 1
-
-			// first reference or within 64k limit or current sequence !== hashed one: no match
-			if ( ref < 0 ||
-				((pos - ref) >>> 16) > 0 ||
-				(
-					((src[ref+3]<<8 | src[ref+2]) != sequenceHighBits) &&
-					((src[ref+1]<<8 | src[ref]) != sequenceLowBits )
-				)
-			) {
-				// increase step if nothing found within limit
-				step = findMatchAttempts++ >> skipStrength
-				pos += step
-				continue
-			}
-
-			findMatchAttempts = (1 << skipStrength) + 3
-
-			// got a match
-			var literals_length = pos - anchor
-			var offset = pos - ref
-
-			// minMatch already verified
-			pos += minMatch
-			ref += minMatch
-
-			// move to the end of the match (>=minMatch)
-			var match_length = pos
-			while (pos < srcLength && src[pos] == src[ref]) {
-				pos++
-				ref++
-			}
-
-			// match length
-			match_length = pos - match_length
-
-			// token
-			var token = match_length < mlMask ? match_length : mlMask
-
-			// encode literals length
-			if (literals_length >= runMask) {
-				// add match length to the token
-				dst[dpos++] = (runMask << mlBits) + token
-				for (var len = literals_length - runMask; len > 254; len -= 255) {
-					dst[dpos++] = 255
-				}
-				dst[dpos++] = len
-			} else {
-				// add match length to the token
-				dst[dpos++] = (literals_length << mlBits) + token
-			}
-
-			// write literals
-			for (var i = 0; i < literals_length; i++) {
-				dst[dpos++] = src[anchor+i]
-			}
-
-			// encode offset
-			dst[dpos++] = offset
-			dst[dpos++] = (offset >> 8)
-
-			// encode match length
-			if (match_length >= mlMask) {
-				match_length -= mlMask
-				while (match_length >= 255) {
-					match_length -= 255
-					dst[dpos++] = 255
-				}
-
-				dst[dpos++] = match_length
-			}
-
-			anchor = pos
-		}
-	}
-
-	// cannot compress input
-	if (anchor == 0) return 0
-
-	// Write last literals
-	// encode literals length
-	literals_length = src.length - anchor
-	if (literals_length >= runMask) {
-		// add match length to the token
-		dst[dpos++] = (runMask << mlBits)
-		for (var ln = literals_length - runMask; ln > 254; ln -= 255) {
-			dst[dpos++] = 255
-		}
-		dst[dpos++] = ln
-	} else {
-		// add match length to the token
-		dst[dpos++] = (literals_length << mlBits)
-	}
-
-	// write literals
-	pos = anchor
-	while (pos < src.length) {
-		dst[dpos++] = src[pos++]
-	}
-
-	return dpos
-}
-
-},{"cuint":28}],19:[function(require,module,exports){
-(function (Buffer){
-var Decoder = require('./decoder_stream')
-
-/**
-	Decode an LZ4 stream
- */
-function LZ4_uncompress (input, options) {
-	var output = []
-	var decoder = new Decoder(options)
-
-	decoder.on('data', function (chunk) {
-		output.push(chunk)
-	})
-
-	decoder.end(input)
-
-	return Buffer.concat(output)
-}
-
-exports.LZ4_uncompress = LZ4_uncompress
-}).call(this,require("buffer").Buffer)
-},{"./decoder_stream":20,"buffer":"xx9DpU"}],20:[function(require,module,exports){
-(function (Buffer){
-var Transform = require('stream').Transform
-var inherits = require('util').inherits
-
-var lz4_static = require('./static')
-var utils = lz4_static.utils
-var lz4_binding = utils.bindings
-var lz4_jsbinding = require('./binding')
-
-var STATES = lz4_static.STATES
-var SIZES = lz4_static.SIZES
-
-function Decoder (options) {
-	if ( !(this instanceof Decoder) )
-		return new Decoder(options)
-	
-	Transform.call(this, options)
-	// Options
-	this.options = options || {}
-
-	this.binding = this.options.useJS ? lz4_jsbinding : lz4_binding
-
-	// Encoded data being processed
-	this.buffer = null
-	// Current position within the data
-	this.pos = 0
-	this.descriptor = null
-
-	// Current state of the parsing
-	this.state = STATES.MAGIC
-
-	this.notEnoughData = false
-	this.descriptorStart = 0
-	this.streamSize = null
-	this.dictId = null
-	this.currentStreamChecksum = null
-	this.dataBlockSize = 0
-	this.skippableSize = 0
-}
-inherits(Decoder, Transform)
-
-Decoder.prototype._transform = function (data, encoding, done) {
-	// Handle skippable data
-	if (this.skippableSize > 0) {
-		this.skippableSize -= data.length
-		if (this.skippableSize > 0) {
-			// More to skip
-			done()
-			return
-		}
-
-		data = data.slice(-this.skippableSize)
-		this.skippableSize = 0
-		this.state = STATES.MAGIC
-	}
-	// Buffer the incoming data
-	this.buffer = this.buffer
-					? Buffer.concat( [ this.buffer, data ], this.buffer.length + data.length )
-					: data
-
-	this._main(done)
-}
-
-Decoder.prototype.emit_Error = function (msg) {
-	this.emit( 'error', new Error(msg + ' @' + this.pos) )
-}
-
-Decoder.prototype.check_Size = function (n) {
-	var delta = this.buffer.length - this.pos
-	if (delta <= 0 || delta < n) {
-		if (this.notEnoughData) this.emit_Error( 'Unexpected end of LZ4 stream' )
-		return true
-	}
-
-	this.pos += n
-	return false
-}
-
-Decoder.prototype.read_MagicNumber = function () {
-	var pos = this.pos
-	if ( this.check_Size(SIZES.MAGIC) ) return true
-
-	var magic = this.buffer.readUInt32LE(pos, true)
-
-	// Skippable chunk
-	if ( (magic & 0xFFFFFFF0) === lz4_static.MAGICNUMBER_SKIPPABLE ) {
-		this.state = STATES.SKIP_SIZE
-		return
-	}
-
-	// LZ4 stream
-	if ( magic !== lz4_static.MAGICNUMBER ) {
-		this.pos = pos
-		this.emit_Error( 'Invalid magic number: ' + magic.toString(16).toUpperCase() )
-		return true
-	}
-
-	this.state = STATES.DESCRIPTOR
-}
-
-Decoder.prototype.read_SkippableSize = function () {
-	var pos = this.pos
-	if ( this.check_Size(SIZES.SKIP_SIZE) ) return true
-	this.state = STATES.SKIP_DATA
-	this.skippableSize = this.buffer.readUInt32LE(pos, true)
-}
-
-Decoder.prototype.read_Descriptor = function () {
-	// Flags
-	var pos = this.pos
-	if ( this.check_Size(SIZES.DESCRIPTOR) ) return true
-
-	this.descriptorStart = pos
-
-	// version
-	var descriptor_flg = this.buffer[pos]
-	var version = descriptor_flg >> 6
-	if ( version !== lz4_static.VERSION ) {
-		this.pos = pos
-		this.emit_Error( 'Invalid version: ' + version + ' != ' + lz4_static.VERSION )
-		return true
-	}
-
-	// flags
-	// reserved bit should not be set
-	if ( (descriptor_flg >> 1) & 0x1 ) {
-		this.pos = pos
-		this.emit_Error('Reserved bit set')
-		return true
-	}
-
-	var blockMaxSizeIndex = (this.buffer[pos+1] >> 4) & 0x7
-	var blockMaxSize = lz4_static.blockMaxSizes[ blockMaxSizeIndex ]
-	if ( blockMaxSize === null ) {
-		this.pos = pos
-		this.emit_Error( 'Invalid block max size: ' + blockMaxSizeIndex )
-		return true
-	}
-
-	this.descriptor = {
-		blockIndependence: Boolean( (descriptor_flg >> 5) & 0x1 )
-	,	blockChecksum: Boolean( (descriptor_flg >> 4) & 0x1 )
-	,	blockMaxSize: blockMaxSize
-	,	streamSize: Boolean( (descriptor_flg >> 3) & 0x1 )
-	,	streamChecksum: Boolean( (descriptor_flg >> 2) & 0x1 )
-	,	dict: Boolean( descriptor_flg & 0x1 )
-	,	dictId: 0
-	}
-
-	this.state = STATES.SIZE
-}
-
-Decoder.prototype.read_Size = function () {
-	if (this.descriptor.streamSize) {
-		var pos = this.pos
-		if ( this.check_Size(SIZES.SIZE) ) return true
-		//TODO max size is unsigned 64 bits
-		this.streamSize = this.buffer.slice(pos, pos + 8)
-	}
-
-	this.state = STATES.DICTID
-}
-
-Decoder.prototype.read_DictId = function () {
-	if (this.descriptor.dictId) {
-		var pos = this.pos
-		if ( this.check_Size(SIZES.DICTID) ) return true
-		this.dictId = this.buffer.readUInt32LE(pos, true)
-	}
-
-	this.state = STATES.DESCRIPTOR_CHECKSUM
-}
-
-Decoder.prototype.read_DescriptorChecksum = function () {
-	var pos = this.pos
-	if ( this.check_Size(SIZES.DESCRIPTOR_CHECKSUM) ) return true
-
-	var checksum = this.buffer[pos]
-	var currentChecksum = utils.descriptorChecksum( this.buffer.slice(this.descriptorStart, pos) )
-	if (currentChecksum !== checksum) {
-		this.pos = pos
-		this.emit_Error( 'Invalid stream descriptor checksum' )
-		return true
-	}
-
-	this.state = STATES.DATABLOCK_SIZE
-}
-
-Decoder.prototype.read_DataBlockSize = function () {
-	var pos = this.pos
-	if ( this.check_Size(SIZES.DATABLOCK_SIZE) ) return true
-	var datablock_size = this.buffer.readUInt32LE(pos, true)
-	// Uncompressed
-	if ( datablock_size === lz4_static.EOS ) {
-		this.state = STATES.EOS
-		return
-	}
-
-// if (datablock_size > this.descriptor.blockMaxSize) {
-// 	this.emit_Error( 'ASSERTION: invalid datablock_size: ' + datablock_size.toString(16).toUpperCase() + ' > ' + this.descriptor.blockMaxSize.toString(16).toUpperCase() )
-// }
-	this.dataBlockSize = datablock_size
-
-	this.state = STATES.DATABLOCK_DATA
-}
-
-Decoder.prototype.read_DataBlockData = function () {
-	var pos = this.pos
-	var datablock_size = this.dataBlockSize
-	if ( datablock_size & 0x80000000 ) {
-		// Uncompressed size
-		datablock_size = datablock_size & 0x7FFFFFFF
-	}
-	if ( this.check_Size(datablock_size) ) return true
-
-	this.dataBlock = this.buffer.slice(pos, pos + datablock_size)
-
-	this.state = STATES.DATABLOCK_CHECKSUM
-}
-
-Decoder.prototype.read_DataBlockChecksum = function () {
-	if (this.descriptor.blockChecksum) {
-		if ( this.check_Size(SIZES.DATABLOCK_CHECKSUM) ) return true
-		var checksum = this.buffer.readUInt32LE(this.pos-4, true)
-		var currentChecksum = utils.blockChecksum( this.dataBlock )
-		if (currentChecksum !== checksum) {
-			this.pos = pos
-			this.emit_Error( 'Invalid block checksum' )
-			return true
-		}
-	}
-
-	this.state = STATES.DATABLOCK_UNCOMPRESS
-}
-
-Decoder.prototype.uncompress_DataBlock = function () {
-	var uncompressed
-	// uncompressed?
-	if ( this.dataBlockSize & 0x80000000 ) {
-		uncompressed = this.dataBlock
-	} else {
-		uncompressed = new Buffer(this.descriptor.blockMaxSize)
-		var decodedSize = this.binding.uncompress( this.dataBlock, uncompressed )
-		if (decodedSize < 0) {
-			this.emit_Error( 'Invalid data block: ' + (-decodedSize) )
-			return true
-		}
-		if ( decodedSize < this.descriptor.blockMaxSize )
-			uncompressed = uncompressed.slice(0, decodedSize)
-	}
-	this.dataBlock = null
-	this.push( uncompressed )
-
-	// Stream checksum
-	if (this.descriptor.streamChecksum) {
-		this.currentStreamChecksum = utils.streamChecksum(uncompressed, this.currentStreamChecksum)
-	}
-
-	this.state = STATES.DATABLOCK_SIZE
-}
-
-Decoder.prototype.read_EOS = function () {
-	if (this.descriptor.streamChecksum) {
-		var pos = this.pos
-		if ( this.check_Size(SIZES.EOS) ) return true
-		var checksum = this.buffer.readUInt32LE(pos, true)
-		if ( checksum !== utils.streamChecksum(null, this.currentStreamChecksum) ) {
-			this.pos = pos
-			this.emit_Error( 'Invalid stream checksum: ' + checksum.toString(16).toUpperCase() )
-			return true
-		}
-	}
-
-	this.state = STATES.MAGIC
-}
-
-Decoder.prototype._flush = function (done) {
-	// Error on missing data as no more will be coming
-	this.notEnoughData = true
-	this._main(done)
-}
-
-Decoder.prototype._main = function (done) {
-	var pos = this.pos
-	var notEnoughData
-
-	while ( !notEnoughData && this.pos < this.buffer.length ) {
-		if (this.state === STATES.MAGIC)
-			notEnoughData = this.read_MagicNumber()
-
-		if (this.state === STATES.SKIP_SIZE)
-			notEnoughData = this.read_SkippableSize()
-
-		if (this.state === STATES.DESCRIPTOR)
-			notEnoughData = this.read_Descriptor()
-
-		if (this.state === STATES.SIZE)
-			notEnoughData = this.read_Size()
-
-		if (this.state === STATES.DICTID)
-			notEnoughData = this.read_DictId()
-
-		if (this.state === STATES.DESCRIPTOR_CHECKSUM)
-			notEnoughData = this.read_DescriptorChecksum()
-
-		if (this.state === STATES.DATABLOCK_SIZE)
-			notEnoughData = this.read_DataBlockSize()
-
-		if (this.state === STATES.DATABLOCK_DATA)
-			notEnoughData = this.read_DataBlockData()
-
-		if (this.state === STATES.DATABLOCK_CHECKSUM)
-			notEnoughData = this.read_DataBlockChecksum()
-
-		if (this.state === STATES.DATABLOCK_UNCOMPRESS)
-			notEnoughData = this.uncompress_DataBlock()
-
-		if (this.state === STATES.EOS)
-			notEnoughData = this.read_EOS()
-	}
-
-	if (this.pos > pos) {
-		this.buffer = this.buffer.slice(this.pos)
-		this.pos = 0
-	}
-
-	done()
-}
-
-module.exports = Decoder
-
-}).call(this,require("buffer").Buffer)
-},{"./binding":18,"./static":25,"buffer":"xx9DpU","stream":9,"util":17}],21:[function(require,module,exports){
-(function (Buffer){
-var Encoder = require('./encoder_stream')
-
-/**
-	Encode an LZ4 stream
- */
-function LZ4_compress (input, options) {
-	var output = []
-	var encoder = new Encoder(options)
-
-	encoder.on('data', function (chunk) {
-		output.push(chunk)
-	})
-
-	encoder.end(input)
-
-	return Buffer.concat(output)
-}
-
-exports.LZ4_compress = LZ4_compress
-
-}).call(this,require("buffer").Buffer)
-},{"./encoder_stream":22,"buffer":"xx9DpU"}],22:[function(require,module,exports){
-(function (Buffer){
-var Transform = require('stream').Transform
-var inherits = require('util').inherits
-
-var lz4_static = require('./static')
-var utils = lz4_static.utils
-var lz4_binding = utils.bindings
-var lz4_jsbinding = require('./binding')
-
-var STATES = lz4_static.STATES
-var SIZES = lz4_static.SIZES
-
-var defaultOptions = {
-	blockIndependence: true
-,	blockChecksum: false
-,	blockMaxSize: 4<<20
-,	streamSize: false
-,	streamChecksum: true
-,	dict: false
-,	dictId: 0
-,	highCompression: false
-}
-
-function Encoder (options) {
-	if ( !(this instanceof Encoder) )
-		return new Encoder(options)
-	
-	Transform.call(this, options)
-
-	// Set the options
-	var o = options || defaultOptions
-	if (o !== defaultOptions)
-		Object.keys(defaultOptions).forEach(function (p) {
-			if ( !o.hasOwnProperty(p) ) o[p] = defaultOptions[p]
-		})
-
-	this.options = o
-
-	this.binding = this.options.useJS ? lz4_jsbinding : lz4_binding
-	this.compress = o.highCompression ? this.binding.compressHC : this.binding.compress
-
-	// Build the stream descriptor from the options
-	// flags
-	var descriptor_flg = 0
-	descriptor_flg = descriptor_flg | (lz4_static.VERSION << 6)			// Version
-	descriptor_flg = descriptor_flg | ((o.blockIndependence & 1) << 5)	// Block independence
-	descriptor_flg = descriptor_flg | ((o.blockChecksum & 1) << 4)		// Block checksum
-	descriptor_flg = descriptor_flg | ((o.streamSize & 1) << 3)			// Stream size
-	descriptor_flg = descriptor_flg | ((o.streamChecksum & 1) << 2)		// Stream checksum
-																		// Reserved bit
-	descriptor_flg = descriptor_flg | (o.dict & 1)						// Preset dictionary
-
-	// block maximum size
-	var descriptor_bd = lz4_static.blockMaxSizes.indexOf(o.blockMaxSize)
-	if (descriptor_bd < 0)
-		throw new Error('Invalid blockMaxSize: ' + o.blockMaxSize)
-
-	this.descriptor = { flg: descriptor_flg, bd: (descriptor_bd & 0x7) << 4 }
-
-	// Data being processed
-	this.buffer = []
-	this.length = 0
-
-	this.first = true
-	this.checksum = null
-}
-inherits(Encoder, Transform)
-
-// Header = magic number + stream descriptor
-Encoder.prototype.headerSize = function () {
-	var streamSizeSize = this.options.streamSize ? SIZES.DESCRIPTOR : 0
-	var dictSize = this.options.dict ? SIZES.DICTID : 0
-
-	return SIZES.MAGIC + 1 + 1 + streamSizeSize + dictSize + 1
-}
-
-Encoder.prototype.header = function () {
-	var headerSize = this.headerSize()
-	var output = new Buffer(headerSize)
-
-	this.state = STATES.MAGIC
-	output.writeUInt32LE(lz4_static.MAGICNUMBER, 0, true)
-
-	this.state = STATES.DESCRIPTOR
-	var descriptor = output.slice(SIZES.MAGIC, output.length - 1)
-
-	// Update the stream descriptor
-	descriptor.writeUInt8(this.descriptor.flg, 0, true)
-	descriptor.writeUInt8(this.descriptor.bd, 1, true)
-
-	var pos = 2
-	this.state = STATES.SIZE
-	if (this.options.streamSize) {
-		//TODO only 32bits size supported
-		descriptor.writeUInt32LE(0, pos, true)
-		descriptor.writeUInt32LE(this.size, pos + 4, true)
-		pos += SIZES.SIZE
-	}
-	this.state = STATES.DICTID
-	if (this.options.dict) {
-		descriptor.writeUInt32LE(this.dictId, pos, true)
-		pos += SIZES.DICTID
-	}
-
-	this.state = STATES.DESCRIPTOR_CHECKSUM
-	output.writeUInt8(
-	  utils.descriptorChecksum( descriptor )
-	, SIZES.MAGIC + pos, false
-	)
-
-	return output
-}
-
-Encoder.prototype.update_Checksum = function (data) {
-	// Calculate the stream checksum
-	this.state = STATES.CHECKSUM_UPDATE
-	if (this.options.streamChecksum) {
-		this.checksum = utils.streamChecksum(data, this.checksum)
-	}
-}
-
-Encoder.prototype.compress_DataBlock = function (data) {
-	this.state = STATES.DATABLOCK_COMPRESS
-	var dbChecksumSize = this.options.blockChecksum ? SIZES.DATABLOCK_CHECKSUM : 0
-	var maxBufSize = this.binding.compressBound(data.length)
-	var buf = new Buffer( SIZES.DATABLOCK_SIZE + maxBufSize + dbChecksumSize )
-	var compressed = buf.slice(SIZES.DATABLOCK_SIZE, SIZES.DATABLOCK_SIZE + maxBufSize)
-	var compressedSize = this.compress(data, compressed)
-
-	// Set the block size
-	this.state = STATES.DATABLOCK_SIZE
-	// Block size shall never be larger than blockMaxSize
-	// console.log("blockMaxSize", this.options.blockMaxSize, "compressedSize", compressedSize)
-	if (compressedSize > 0 && compressedSize <= this.options.blockMaxSize) {
-		// highest bit is 0 (compressed data)
-		buf.writeUInt32LE(compressedSize, 0, true)
-		buf = buf.slice(0, SIZES.DATABLOCK_SIZE + compressedSize + dbChecksumSize)
-	} else {
-		// Cannot compress the data, leave it as is
-		// highest bit is 1 (uncompressed data)
-		buf.writeInt32LE( 0x80000000 | data.length, 0, true)
-		buf = buf.slice(0, SIZES.DATABLOCK_SIZE + data.length + dbChecksumSize)
-		data.copy(buf, SIZES.DATABLOCK_SIZE);
-	}
-
-	// Set the block checksum
-	this.state = STATES.DATABLOCK_CHECKSUM
-	if (this.options.blockChecksum) {
-		// xxHash checksum on undecoded data with a seed of 0
-		var checksum = buf.slice(-dbChecksumSize)
-		checksum.writeUInt32LE( utils.blockChecksum(compressed), 0, false )
-	}
-
-	// Update the stream checksum
-	this.update_Checksum(data)
-
-	this.size += data.length
-
-	return buf
-}
-
-Encoder.prototype._transform = function (data, encoding, done) {
-	if (data) {
-		// Buffer the incoming data
-		this.buffer.push(data)
-		this.length += data.length
-	}
-
-	// Stream header
-	if (this.first) {
-		this.push( this.header() )
-		this.first = false
-	}
-
-	var blockMaxSize = this.options.blockMaxSize
-	// Not enough data for a block
-	if ( this.length < blockMaxSize ) return done()
-
-	// Build the data to be compressed
-	var buf = Buffer.concat(this.buffer, this.length)
-
-	for (var j = 0, i = buf.length; i >= blockMaxSize; i -= blockMaxSize, j += blockMaxSize) {
-		// Compress the block
-		this.push( this.compress_DataBlock( buf.slice(j, j + blockMaxSize) ) )
-	}
-
-	// Set the remaining data
-	if (i > 0) {
-		this.buffer = [ buf.slice(j) ]
-		this.length = this.buffer[0].length
-	} else {
-		this.buffer = []
-		this.length = 0
-	}
-
-	done()
-}
-
-Encoder.prototype._flush = function (done) {
-	if (this.length > 0) {
-		var buf = Buffer.concat(this.buffer, this.length)
-		this.buffer = []
-		this.length = 0
-		var cc = this.compress_DataBlock(buf)
-		this.push( cc )
-	}
-
-	if (this.options.streamChecksum) {
-		this.state = STATES.CHECKSUM
-		var eos = new Buffer(SIZES.EOS + SIZES.CHECKSUM)
-		eos.writeUInt32LE( utils.streamChecksum(null, this.checksum), SIZES.EOS, false )
-	} else {
-		var eos = new Buffer(SIZES.EOS)
-	}
-
-	this.state = STATES.EOS
-	eos.writeUInt32LE(lz4_static.EOS, 0, true)
-	this.push(eos)
-
-	done()
-}
-
-module.exports = Encoder
-
-}).call(this,require("buffer").Buffer)
-},{"./binding":18,"./static":25,"buffer":"xx9DpU","stream":9,"util":17}],"lz4":[function(require,module,exports){
-module.exports=require('nlAsow');
-},{}],"nlAsow":[function(require,module,exports){
-/**
- * LZ4 based compression and decompression
- * Copyright (c) 2014 Pierre Curto
- * MIT Licensed
- */
-
-module.exports = require('./static')
-
-module.exports.createDecoderStream = require('./decoder_stream')
-module.exports.decode = require('./decoder').LZ4_uncompress
-
-module.exports.createEncoderStream = require('./encoder_stream')
-module.exports.encode = require('./encoder').LZ4_compress
-
-// Expose block decoder and encoders
-var bindings = module.exports.utils.bindings
-
-module.exports.decodeBlock = bindings.uncompress
-
-module.exports.encodeBound = bindings.compressBound
-module.exports.encodeBlock = bindings.compress
-module.exports.encodeBlockHC = bindings.compressHC
-
-},{"./decoder":19,"./decoder_stream":20,"./encoder":21,"./encoder_stream":22,"./static":25}],25:[function(require,module,exports){
-(function (Buffer){
-/**
- * LZ4 based compression and decompression
- * Copyright (c) 2014 Pierre Curto
- * MIT Licensed
- */
-
-// LZ4 stream constants
-exports.MAGICNUMBER = 0x184D2204
-exports.MAGICNUMBER_BUFFER = new Buffer(4)
-exports.MAGICNUMBER_BUFFER.writeUInt32LE(exports.MAGICNUMBER, 0, false)
-
-exports.EOS = 0
-exports.EOS_BUFFER = new Buffer(4)
-exports.EOS_BUFFER.writeUInt32LE(exports.EOS, 0, false)
-
-exports.VERSION = 1
-
-exports.MAGICNUMBER_SKIPPABLE = 0x184D2A50
-
-// n/a, n/a, n/a, n/a, 64KB, 256KB, 1MB, 4MB
-exports.blockMaxSizes = [ null, null, null, null, 64<<10, 256<<10, 1<<20, 4<<20 ]
-
-// Compressed file extension
-exports.extension = '.lz4'
-
-// Internal stream states
-exports.STATES = {
-// Compressed stream
-	MAGIC: 0
-,	DESCRIPTOR: 1
-,	SIZE: 2
-,	DICTID: 3
-,	DESCRIPTOR_CHECKSUM: 4
-,	DATABLOCK_SIZE: 5
-,	DATABLOCK_DATA: 6
-,	DATABLOCK_CHECKSUM: 7
-,	DATABLOCK_UNCOMPRESS: 8
-,	DATABLOCK_COMPRESS: 9
-,	CHECKSUM: 10
-,	CHECKSUM_UPDATE: 11
-,	EOS: 90
-// Skippable chunk
-,	SKIP_SIZE: 101
-,	SKIP_DATA: 102
-}
-
-exports.SIZES = {
-	MAGIC: 4
-,	DESCRIPTOR: 2
-,	SIZE: 8
-,	DICTID: 4
-,	DESCRIPTOR_CHECKSUM: 1
-,	DATABLOCK_SIZE: 4
-,	DATABLOCK_CHECKSUM: 4
-,	CHECKSUM: 4
-,	EOS: 4
-,	SKIP_SIZE: 4
-}
-
-exports.utils = require('./utils')
-
-}).call(this,require("buffer").Buffer)
-},{"./utils":"uQlS2P","buffer":"xx9DpU"}],"./utils":[function(require,module,exports){
-module.exports=require('uQlS2P');
-},{}],"uQlS2P":[function(require,module,exports){
-/**
- * Javascript emulated bindings
- */
-var XXH = require('xxhashjs')
-
-var CHECKSUM_SEED = 0
-
-// Header checksum is second byte of xxhash using 0 as a seed
-exports.descriptorChecksum = function (d) {
-	return (XXH(d, CHECKSUM_SEED).toNumber() >> 8) & 0xFF
-}
-
-exports.blockChecksum = function (d) {
-	return XXH(d, CHECKSUM_SEED).toNumber()
-}
-
-exports.streamChecksum = function (d, c) {
-	if (d === null)
-		return c.digest().toNumber()
-
-	if (c === null)
-		c = XXH(CHECKSUM_SEED)
-
-	return c.update(d)
-}
-
-exports.bindings = require('./binding')
-
-},{"./binding":18,"xxhashjs":31}],28:[function(require,module,exports){
+}).call(this,require("FWaASH"),typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{"./support/isBuffer":32,"FWaASH":17,"inherits":16}],34:[function(require,module,exports){
 exports.UINT32 = require('./lib/uint32')
 exports.UINT64 = require('./lib/uint64')
-},{"./lib/uint32":29,"./lib/uint64":30}],29:[function(require,module,exports){
+},{"./lib/uint32":35,"./lib/uint64":36}],35:[function(require,module,exports){
 /**
 	C-like unsigned 32 bits integers in Javascript
 	Copyright (C) 2013, Pierre Curto
@@ -5697,7 +5948,7 @@ exports.UINT64 = require('./lib/uint64')
 	}
 
 })(this)
-},{}],30:[function(require,module,exports){
+},{}],36:[function(require,module,exports){
 /**
 	C-like unsigned 64 bits integers in Javascript
 	Copyright (C) 2013, Pierre Curto
@@ -6332,7 +6583,7 @@ exports.UINT64 = require('./lib/uint64')
 	}
 
 })(this)
-},{}],31:[function(require,module,exports){
+},{}],37:[function(require,module,exports){
 (function (Buffer){
 /**
 	xxHash implementation in pure Javascript
@@ -6431,7 +6682,7 @@ exports.UINT64 = require('./lib/uint64')
 		this.v4 = this.seed.clone().subtract(PRIME32_1)
 		this.total_len = 0
 		this.memsize = 0
-		this.memory = new Buffer(16)
+		this.memory = null
 
 		return this
 	}
@@ -6440,11 +6691,19 @@ exports.UINT64 = require('./lib/uint64')
 	/**
 	 * Add data to be computed for the XXH hash
 	 * @method update
-	 * @param {String|Buffer} input as a string or nodejs Buffer
+	 * @param {String|Buffer|ArrayBuffer} input as a string or nodejs Buffer or ArrayBuffer
 	 * @return ThisExpression
 	 */
 	XXH.prototype.update = function (input) {
 		var isString = typeof input == 'string'
+		var isArrayBuffer
+
+		if (input instanceof ArrayBuffer)
+		{
+			isArrayBuffer = true
+			input = new Uint8Array(input);
+		}
+
 		var p = 0
 		var len = input.length
 		var bEnd = p + len
@@ -6453,13 +6712,24 @@ exports.UINT64 = require('./lib/uint64')
 
 		this.total_len += len
 
-		if (this.memsize == 0 && isString) this.memory = ''
+		if (this.memsize == 0)
+		{
+			if (isString) {
+				this.memory = ''
+			} else if (isArrayBuffer) {
+				this.memory = new Uint8Array(16)
+			} else {
+				this.memory = new Buffer(16)
+			}
+		}
 
 		if (this.memsize + len < 16)   // fill in tmp buffer
 		{
 			// XXH_memcpy(this.memory + this.memsize, input, len)
 			if (isString) {
 				this.memory += input
+			} else if (isArrayBuffer) {
+				this.memory.set( input.subarray(0, len), this.memsize )
 			} else {
 				input.copy( this.memory, this.memsize, 0, len )
 			}
@@ -6473,6 +6743,8 @@ exports.UINT64 = require('./lib/uint64')
 			// XXH_memcpy(this.memory + this.memsize, input, 16-this.memsize);
 			if (isString) {
 				this.memory += input.slice(0, 16 - this.memsize)
+			} else if (isArrayBuffer) {
+				this.memory.set( input.subarray(0, 16 - this.memsize), this.memsize )
 			} else {
 				input.copy( this.memory, this.memsize, 0, 16 - this.memsize )
 			}
@@ -6581,6 +6853,8 @@ exports.UINT64 = require('./lib/uint64')
 			// XXH_memcpy(this.memory, p, bEnd-p);
 			if (isString) {
 				this.memory += input.slice(p)
+			} else if (isArrayBuffer) {
+				this.memory.set( input.subarray(p, bEnd), this.memsize )
 			} else {
 				input.copy( this.memory, this.memsize, p, bEnd )
 			}
@@ -6673,5 +6947,6 @@ exports.UINT64 = require('./lib/uint64')
 	}
 
 })(this)
+
 }).call(this,require("buffer").Buffer)
-},{"buffer":"xx9DpU","cuint":28}]},{},["nlAsow"])
+},{"buffer":"cTGqya","cuint":34}]},{},["nlAsow"])
