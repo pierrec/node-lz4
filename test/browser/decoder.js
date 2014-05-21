@@ -13,7 +13,7 @@ describe('Browser encoding', function () {
       runs(function () {
         expect(text).toBeDefined()
         var encoded_data = lz4.encode(text)
-        expect(lz4.decode(encoded_data)).toEqual(text)
+        expect(lz4.decode(encoded_data).toString()).toEqual(text)
       })
     })
 

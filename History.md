@@ -1,3 +1,8 @@
+0.3.8 / 2014-05-21
+==================
+
+* Fixed issue where the browser implementation of Buffer checks sign in writeUInt32LE()
+
 0.3.7 / 2014-05-20
 ==================
 

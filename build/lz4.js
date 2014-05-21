@@ -1,6 +1,4 @@
-require=(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);throw new Error("Cannot find module '"+o+"'")}var f=n[o]={exports:{}};t[o][0].call(f.exports,function(e){var n=t[o][1][e];return s(n?n:e)},f,f.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({"buffer":[function(require,module,exports){
-module.exports=require('xx9DpU');
-},{}],"xx9DpU":[function(require,module,exports){
+require=(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);throw new Error("Cannot find module '"+o+"'")}var f=n[o]={exports:{}};t[o][0].call(f.exports,function(e){var n=t[o][1][e];return s(n?n:e)},f,f.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({"xx9DpU":[function(require,module,exports){
 /**
  * The buffer module from node.js, for the browser.
  *
@@ -1113,7 +1111,9 @@ function assert (test, message) {
   if (!test) throw new Error(message || 'Failed assertion')
 }
 
-},{"base64-js":3,"ieee754":4}],3:[function(require,module,exports){
+},{"base64-js":3,"ieee754":4}],"buffer":[function(require,module,exports){
+module.exports=require('xx9DpU');
+},{}],3:[function(require,module,exports){
 var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 ;(function (exports) {
@@ -4975,7 +4975,7 @@ Encoder.prototype.header = function () {
 	var output = new Buffer(headerSize)
 
 	this.state = STATES.MAGIC
-	output.writeUInt32LE(lz4_static.MAGICNUMBER, 0, true)
+	output.writeInt32LE(lz4_static.MAGICNUMBER, 0, true)
 
 	this.state = STATES.DESCRIPTOR
 	var descriptor = output.slice(SIZES.MAGIC, output.length - 1)
@@ -4988,13 +4988,13 @@ Encoder.prototype.header = function () {
 	this.state = STATES.SIZE
 	if (this.options.streamSize) {
 		//TODO only 32bits size supported
-		descriptor.writeUInt32LE(0, pos, true)
-		descriptor.writeUInt32LE(this.size, pos + 4, true)
+		descriptor.writeInt32LE(0, pos, true)
+		descriptor.writeInt32LE(this.size, pos + 4, true)
 		pos += SIZES.SIZE
 	}
 	this.state = STATES.DICTID
 	if (this.options.dict) {
-		descriptor.writeUInt32LE(this.dictId, pos, true)
+		descriptor.writeInt32LE(this.dictId, pos, true)
 		pos += SIZES.DICTID
 	}
 
@@ -5044,7 +5044,7 @@ Encoder.prototype.compress_DataBlock = function (data) {
 	if (this.options.blockChecksum) {
 		// xxHash checksum on undecoded data with a seed of 0
 		var checksum = buf.slice(-dbChecksumSize)
-		checksum.writeUInt32LE( utils.blockChecksum(compressed), 0, false )
+		checksum.writeInt32LE( utils.blockChecksum(compressed), 0, false )
 	}
 
 	// Update the stream checksum
@@ -5104,13 +5104,13 @@ Encoder.prototype._flush = function (done) {
 	if (this.options.streamChecksum) {
 		this.state = STATES.CHECKSUM
 		var eos = new Buffer(SIZES.EOS + SIZES.CHECKSUM)
-		eos.writeUInt32LE( utils.streamChecksum(null, this.checksum), SIZES.EOS, false )
+		eos.writeInt32LE( utils.streamChecksum(null, this.checksum), SIZES.EOS, false )
 	} else {
 		var eos = new Buffer(SIZES.EOS)
 	}
 
 	this.state = STATES.EOS
-	eos.writeUInt32LE(lz4_static.EOS, 0, true)
+	eos.writeInt32LE(lz4_static.EOS, 0, true)
 	this.push(eos)
 
 	done()
@@ -5119,9 +5119,7 @@ Encoder.prototype._flush = function (done) {
 module.exports = Encoder
 
 }).call(this,require("buffer").Buffer)
-},{"./binding":18,"./static":25,"buffer":"xx9DpU","stream":9,"util":17}],"lz4":[function(require,module,exports){
-module.exports=require('nlAsow');
-},{}],"nlAsow":[function(require,module,exports){
+},{"./binding":18,"./static":25,"buffer":"xx9DpU","stream":9,"util":17}],"nlAsow":[function(require,module,exports){
 /**
  * LZ4 based compression and decompression
  * Copyright (c) 2014 Pierre Curto
@@ -5145,7 +5143,9 @@ module.exports.encodeBound = bindings.compressBound
 module.exports.encodeBlock = bindings.compress
 module.exports.encodeBlockHC = bindings.compressHC
 
-},{"./decoder":19,"./decoder_stream":20,"./encoder":21,"./encoder_stream":22,"./static":25}],25:[function(require,module,exports){
+},{"./decoder":19,"./decoder_stream":20,"./encoder":21,"./encoder_stream":22,"./static":25}],"lz4":[function(require,module,exports){
+module.exports=require('nlAsow');
+},{}],25:[function(require,module,exports){
 (function (Buffer){
 /**
  * LZ4 based compression and decompression
@@ -5209,9 +5209,7 @@ exports.SIZES = {
 exports.utils = require('./utils')
 
 }).call(this,require("buffer").Buffer)
-},{"./utils":"uQlS2P","buffer":"xx9DpU"}],"./utils":[function(require,module,exports){
-module.exports=require('uQlS2P');
-},{}],"uQlS2P":[function(require,module,exports){
+},{"./utils":"uQlS2P","buffer":"xx9DpU"}],"uQlS2P":[function(require,module,exports){
 /**
  * Javascript emulated bindings
  */
@@ -5240,7 +5238,9 @@ exports.streamChecksum = function (d, c) {
 
 exports.bindings = require('./binding')
 
-},{"./binding":18,"xxhashjs":31}],28:[function(require,module,exports){
+},{"./binding":18,"xxhashjs":31}],"./utils":[function(require,module,exports){
+module.exports=require('uQlS2P');
+},{}],28:[function(require,module,exports){
 exports.UINT32 = require('./lib/uint32')
 exports.UINT64 = require('./lib/uint64')
 },{"./lib/uint32":29,"./lib/uint64":30}],29:[function(require,module,exports){
