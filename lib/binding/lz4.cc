@@ -19,7 +19,8 @@ using namespace v8;
 Handle<Value> LZ4Compress(const Arguments& args) {
   HandleScope scope;
 
-  if (args.Length() != 2) {
+  uint32_t alen = args.Length();
+  if (alen < 2 && alen > 4) {
     ThrowException(Exception::Error(String::New("Wrong number of arguments")));
     return scope.Close(Undefined());
   }
@@ -28,14 +29,43 @@ Handle<Value> LZ4Compress(const Arguments& args) {
     ThrowException(Exception::TypeError(String::New("Wrong arguments")));
     return scope.Close(Undefined());
   }
-
   Local<Object> input = args[0]->ToObject();
   Local<Object> output = args[1]->ToObject();
 
-  Local<Integer> result = Integer::NewFromUnsigned(LZ4_compress(Buffer::Data(input),
-                                                            Buffer::Data(output),
-                                                            Buffer::Length(input))
-                                                );
+  Local<Integer> result;
+  uint32_t sIdx = 0;
+  uint32_t eIdx = Buffer::Length(output);
+  switch (alen) {
+  case 4:
+    if (!args[3]->IsUint32()) {
+      ThrowException(Exception::TypeError(String::New("Invalid endIdx")));
+      return scope.Close(Undefined());
+    }
+    if (!args[2]->IsUint32()) {
+      ThrowException(Exception::TypeError(String::New("Invalid startIdx")));
+      return scope.Close(Undefined());
+    }
+    sIdx = args[2]->Uint32Value();
+    eIdx = args[3]->Uint32Value();
+    result = Integer::NewFromUnsigned(LZ4_compress_limitedOutput(Buffer::Data(input),
+                                                              Buffer::Data(output) + sIdx,
+                                                              Buffer::Length(input),
+                                                              eIdx - sIdx)
+                                                  );
+    break;
+  case 3:
+    if (!args[2]->IsUint32()) {
+      ThrowException(Exception::TypeError(String::New("Invalid startIdx")));
+      return scope.Close(Undefined());
+    }
+    sIdx = args[2]->Uint32Value();
+  case 2:
+    result = Integer::NewFromUnsigned(LZ4_compress(Buffer::Data(input),
+                                                              Buffer::Data(output) + sIdx,
+                                                              Buffer::Length(input))
+                                                  );
+  }
+
   return scope.Close(result->ToUint32());
 }
 
@@ -256,7 +286,8 @@ Handle<Value> LZ4Stream_free(const Arguments& args) {
 Handle<Value> LZ4Uncompress(const Arguments& args) {
   HandleScope scope;
 
-  if (args.Length() != 2) {
+  uint32_t alen = args.Length();
+  if (alen < 2 && alen > 4) {
     ThrowException(Exception::Error(String::New("Wrong number of arguments")));
     return scope.Close(Undefined());
   }
@@ -265,15 +296,44 @@ Handle<Value> LZ4Uncompress(const Arguments& args) {
     ThrowException(Exception::TypeError(String::New("Wrong arguments")));
     return scope.Close(Undefined());
   }
-
   Local<Object> input = args[0]->ToObject();
   Local<Object> output = args[1]->ToObject();
 
-  Local<Integer> result = Integer::NewFromUnsigned(LZ4_decompress_safe(Buffer::Data(input),
+  Local<Integer> result;
+  uint32_t sIdx = 0;
+  uint32_t eIdx = Buffer::Length(input);
+  switch (alen) {
+  case 4:
+    if (!args[3]->IsUint32()) {
+      ThrowException(Exception::TypeError(String::New("Invalid endIdx")));
+      return scope.Close(Undefined());
+    }
+    if (!args[2]->IsUint32()) {
+      ThrowException(Exception::TypeError(String::New("Invalid startIdx")));
+      return scope.Close(Undefined());
+    }
+    sIdx = args[2]->Uint32Value();
+    eIdx = args[3]->Uint32Value();
+    result = Integer::NewFromUnsigned(LZ4_decompress_safe(Buffer::Data(input) + sIdx,
                                                             Buffer::Data(output),
-                                                            Buffer::Length(input),
+                                                            eIdx - sIdx,
                                                             Buffer::Length(output))
                                                 );
+    break;
+  case 3:
+    if (!args[2]->IsInt32()) {
+      ThrowException(Exception::TypeError(String::New("Invalid startIdx")));
+      return scope.Close(Undefined());
+    }
+    sIdx = args[2]->Uint32Value();
+  case 2:
+    result = Integer::NewFromUnsigned(LZ4_decompress_safe(Buffer::Data(input) + sIdx,
+                                                            Buffer::Data(output),
+                                                            eIdx - sIdx,
+                                                            Buffer::Length(output))
+                                                );
+  }
+
   return scope.Close(result->ToUint32());
 }
 

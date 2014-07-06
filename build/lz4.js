@@ -4290,9 +4290,11 @@ var uint32 = require('cuint').UINT32
  * @return {Number} number of decoded bytes
  * @private
  */
-exports.uncompress = function (input, output) {
+exports.uncompress = function (input, output, sIdx, eIdx) {
+	sIdx = sIdx || 0
+	eIdx = eIdx || (input.length - sIdx)
 	// Process each sequence in the incoming data
-	for (var i = 0, n = input.length, j = 0; i < n;) {
+	for (var i = sIdx, n = eIdx, j = 0; i < n;) {
 		var token = input[i++]
 
 		// Literals
@@ -4366,20 +4368,21 @@ exports.compressBound = function (isize) {
 
 exports.compressHC = exports.compress
 
-exports.compress = function (src, dst) {
+exports.compress = function (src, dst, sIdx, eIdx) {
 	// V8 optimization: non sparse array with integers
 	var hashTable = new Array(hashSize)
 	for (var i = 0; i < hashSize; i++) {
 		hashTable[i] = 0
 	}
-	return compressBlock(src, dst, 0, hashTable)
+	return compressBlock(src, dst, 0, hashTable, sIdx || 0, eIdx || dst.length)
 }
 
 exports.compressDependent = compressBlock
 
-function compressBlock (src, dst, pos, hashTable) {
+function compressBlock (src, dst, pos, hashTable, sIdx, eIdx) {
 	var Hash = uint32() // Reusable unsigned 32 bits integer
-	var dpos = 0
+	var dpos = sIdx
+	var dlen = eIdx - sIdx
 	var anchor = 0
 
 	if (src.length >= maxInputSize) throw new Error("input too large")
@@ -4387,7 +4390,7 @@ function compressBlock (src, dst, pos, hashTable) {
 	// Minimum of input bytes for compression (LZ4 specs)
 	if (src.length > mfLimit) {
 		var n = exports.compressBound(src.length)
-		if ( dst.length < n ) throw Error("output too small: " + dst.length + " < " + n)
+		if ( dlen < n ) throw Error("output too small: " + dlen + " < " + n)
 
 		var 
 			step  = 1
@@ -4620,7 +4623,7 @@ Decoder.prototype.read_MagicNumber = function () {
 	var pos = this.pos
 	if ( this.check_Size(SIZES.MAGIC) ) return true
 
-	var magic = this.buffer.readUInt32LE(pos, true)
+	var magic = this.buffer.readInt32LE(pos, true)
 
 	// Skippable chunk
 	if ( (magic & 0xFFFFFFF0) === lz4_static.MAGICNUMBER_SKIPPABLE ) {
@@ -4761,7 +4764,7 @@ Decoder.prototype.read_DataBlockData = function () {
 Decoder.prototype.read_DataBlockChecksum = function () {
 	if (this.descriptor.blockChecksum) {
 		if ( this.check_Size(SIZES.DATABLOCK_CHECKSUM) ) return true
-		var checksum = this.buffer.readUInt32LE(this.pos-4, true)
+		var checksum = this.buffer.readInt32LE(this.pos-4, true)
 		var currentChecksum = utils.blockChecksum( this.dataBlock )
 		if (currentChecksum !== checksum) {
 			this.pos = pos
@@ -4803,7 +4806,7 @@ Decoder.prototype.read_EOS = function () {
 	if (this.descriptor.streamChecksum) {
 		var pos = this.pos
 		if ( this.check_Size(SIZES.EOS) ) return true
-		var checksum = this.buffer.readUInt32LE(pos, true)
+		var checksum = this.buffer.readInt32LE(pos, true)
 		if ( checksum !== utils.streamChecksum(null, this.currentStreamChecksum) ) {
 			this.pos = pos
 			this.emit_Error( 'Invalid stream checksum: ' + checksum.toString(16).toUpperCase() )
@@ -5119,7 +5122,9 @@ Encoder.prototype._flush = function (done) {
 module.exports = Encoder
 
 }).call(this,require("buffer").Buffer)
-},{"./binding":18,"./static":25,"buffer":"xx9DpU","stream":9,"util":17}],"nlAsow":[function(require,module,exports){
+},{"./binding":18,"./static":25,"buffer":"xx9DpU","stream":9,"util":17}],"lz4":[function(require,module,exports){
+module.exports=require('nlAsow');
+},{}],"nlAsow":[function(require,module,exports){
 /**
  * LZ4 based compression and decompression
  * Copyright (c) 2014 Pierre Curto
@@ -5143,9 +5148,7 @@ module.exports.encodeBound = bindings.compressBound
 module.exports.encodeBlock = bindings.compress
 module.exports.encodeBlockHC = bindings.compressHC
 
-},{"./decoder":19,"./decoder_stream":20,"./encoder":21,"./encoder_stream":22,"./static":25}],"lz4":[function(require,module,exports){
-module.exports=require('nlAsow');
-},{}],25:[function(require,module,exports){
+},{"./decoder":19,"./decoder_stream":20,"./encoder":21,"./encoder_stream":22,"./static":25}],25:[function(require,module,exports){
 (function (Buffer){
 /**
  * LZ4 based compression and decompression

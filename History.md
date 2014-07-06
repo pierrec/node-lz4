@@ -1,3 +1,9 @@
+0.3.9 / 2014-07-06
+==================
+
+* Fixed checksum errors in the decoder (browser implementation) (issue #14)
+* Added start and end indexes to decodeBlock() and encodeBlock() (issue #15)
+
 0.3.8 / 2014-05-21
 ==================
 

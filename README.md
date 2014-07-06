@@ -170,15 +170,19 @@ fs.writeFileSync('test', output)
 
 In some cases, it is useful to be able to manipulate an LZ4 block instead of an LZ4 stream. The functions to decode and encode are therefore exposed as:
 
-* `LZ4#decodeBlock(input, output)` (_Number_) >=0: uncompressed size, <0: error at offset
+* `LZ4#decodeBlock(input, output[, startIdx, endIdx])` (_Number_) >=0: uncompressed size, <0: error at offset
 	* `input` (_Buffer_): data block to decode
 	* `output` (_Buffer_): decoded data block
+	* `startIdx` (_Number_): input buffer start index (optional, default=0)
+	* `endIdx` (_Number_): input buffer end index (optional, default=startIdx + input.length)
 * `LZ4#encodeBound(inputSize)` (_Number_): maximum size for a compressed block
 	* `inputSize` (_Number_) size of the input, 0 if too large
 	This is required to size the buffer for a block encoded data
-* `LZ4#encodeBlock(input, output)` (_Number_) >0: compressed size, =0: not compressible
+* `LZ4#encodeBlock(input, output[, startIdx, endIdx])` (_Number_) >0: compressed size, =0: not compressible
 	* `input` (_Buffer_): data block to encode
 	* `output` (_Buffer_): encoded data block
+	* `startIdx` (_Number_): output buffer start index (optional, default=0)
+	* `endIdx` (_Number_): output buffer end index (optional, default=startIdx + output.length)
 * `LZ4#encodeBlockHC(input, output)` (_Number_) >0: compressed size, =0: not compressible
 	* `input` (_Buffer_): data block to encode with high compression
 	* `output` (_Buffer_): encoded data block
