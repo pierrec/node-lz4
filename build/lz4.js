@@ -5122,7 +5122,9 @@ Encoder.prototype._flush = function (done) {
 module.exports = Encoder
 
 }).call(this,require("buffer").Buffer)
-},{"./binding":18,"./static":25,"buffer":"xx9DpU","stream":9,"util":17}],"nlAsow":[function(require,module,exports){
+},{"./binding":18,"./static":25,"buffer":"xx9DpU","stream":9,"util":17}],"lz4":[function(require,module,exports){
+module.exports=require('nlAsow');
+},{}],"nlAsow":[function(require,module,exports){
 /**
  * LZ4 based compression and decompression
  * Copyright (c) 2014 Pierre Curto
@@ -5146,9 +5148,7 @@ module.exports.encodeBound = bindings.compressBound
 module.exports.encodeBlock = bindings.compress
 module.exports.encodeBlockHC = bindings.compressHC
 
-},{"./decoder":19,"./decoder_stream":20,"./encoder":21,"./encoder_stream":22,"./static":25}],"lz4":[function(require,module,exports){
-module.exports=require('nlAsow');
-},{}],25:[function(require,module,exports){
+},{"./decoder":19,"./decoder_stream":20,"./encoder":21,"./encoder_stream":22,"./static":25}],25:[function(require,module,exports){
 (function (Buffer){
 /**
  * LZ4 based compression and decompression
@@ -5212,7 +5212,9 @@ exports.SIZES = {
 exports.utils = require('./utils')
 
 }).call(this,require("buffer").Buffer)
-},{"./utils":"uQlS2P","buffer":"xx9DpU"}],"uQlS2P":[function(require,module,exports){
+},{"./utils":"uQlS2P","buffer":"xx9DpU"}],"./utils":[function(require,module,exports){
+module.exports=require('uQlS2P');
+},{}],"uQlS2P":[function(require,module,exports){
 /**
  * Javascript emulated bindings
  */
@@ -5241,9 +5243,7 @@ exports.streamChecksum = function (d, c) {
 
 exports.bindings = require('./binding')
 
-},{"./binding":18,"xxhashjs":31}],"./utils":[function(require,module,exports){
-module.exports=require('uQlS2P');
-},{}],28:[function(require,module,exports){
+},{"./binding":18,"xxhashjs":31}],28:[function(require,module,exports){
 exports.UINT32 = require('./lib/uint32')
 exports.UINT64 = require('./lib/uint64')
 },{"./lib/uint32":29,"./lib/uint64":30}],29:[function(require,module,exports){
