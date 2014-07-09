@@ -5122,9 +5122,7 @@ Encoder.prototype._flush = function (done) {
 module.exports = Encoder
 
 }).call(this,require("buffer").Buffer)
-},{"./binding":18,"./static":25,"buffer":"xx9DpU","stream":9,"util":17}],"lz4":[function(require,module,exports){
-module.exports=require('nlAsow');
-},{}],"nlAsow":[function(require,module,exports){
+},{"./binding":18,"./static":25,"buffer":"xx9DpU","stream":9,"util":17}],"nlAsow":[function(require,module,exports){
 /**
  * LZ4 based compression and decompression
  * Copyright (c) 2014 Pierre Curto
@@ -5148,7 +5146,9 @@ module.exports.encodeBound = bindings.compressBound
 module.exports.encodeBlock = bindings.compress
 module.exports.encodeBlockHC = bindings.compressHC
 
-},{"./decoder":19,"./decoder_stream":20,"./encoder":21,"./encoder_stream":22,"./static":25}],25:[function(require,module,exports){
+},{"./decoder":19,"./decoder_stream":20,"./encoder":21,"./encoder_stream":22,"./static":25}],"lz4":[function(require,module,exports){
+module.exports=require('nlAsow');
+},{}],25:[function(require,module,exports){
 (function (Buffer){
 /**
  * LZ4 based compression and decompression

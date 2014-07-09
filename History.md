@@ -1,3 +1,8 @@
+0.3.10 / 2014-07-09
+===================
+
+* Removed garbage in build/lz4.min.js by updating minify to latest version
+
 0.3.9 / 2014-07-06
 ==================
 
