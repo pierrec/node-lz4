@@ -19,15 +19,22 @@
 			var outputSize = LZ4.encodeBlock( input, output )
 			var endTime = Date.now()
 			console.log("encoded in " + (endTime-startTime) + "ms")
-			// Resize according to the compressed size
-			output = output.slice(0, outputSize)
+			if (outputSize > 0) {
+				// Resize according to the compressed size
+				output = output.slice(0, outputSize)
 
-			console.debug("output", output)
-			var outputB64 = btoa( encodeURIComponent(output) )
-			document.getElementById('output').value = outputB64
+				console.debug("output", output)
+				var outputB64 = btoa( encodeURIComponent(output) )
+				document.getElementById('output').value = outputB64
 
-			document.getElementById('inputSize').innerHTML = "Size: " + str.length
-			document.getElementById('outputSize').innerHTML = "Buffer size: " + output.length + "<br> B64 size: " + outputB64.length
+				document.getElementById('inputSize').innerHTML = "Size: " + str.length
+				document.getElementById('outputSize').innerHTML = "Buffer size: " + output.length + "<br> B64 size: " + outputB64.length
+			} else {
+				document.getElementById('output').value = str
+
+				document.getElementById('inputSize').innerHTML = "Size: " + str.length
+				document.getElementById('outputSize').innerHTML = "<b>not compressible</b>"
+			}
 		}
 	</script>
 	<div>
