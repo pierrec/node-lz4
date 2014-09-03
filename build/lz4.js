@@ -5047,7 +5047,7 @@ Encoder.prototype.compress_DataBlock = function (data) {
 	if (this.options.blockChecksum) {
 		// xxHash checksum on undecoded data with a seed of 0
 		var checksum = buf.slice(-dbChecksumSize)
-		checksum.writeInt32LE( utils.blockChecksum(compressed), 0, false )
+		checksum.writeInt32LE( utils.blockChecksum(compressed), 0, true )
 	}
 
 	// Update the stream checksum
@@ -5107,7 +5107,7 @@ Encoder.prototype._flush = function (done) {
 	if (this.options.streamChecksum) {
 		this.state = STATES.CHECKSUM
 		var eos = new Buffer(SIZES.EOS + SIZES.CHECKSUM)
-		eos.writeInt32LE( utils.streamChecksum(null, this.checksum), SIZES.EOS, false )
+		eos.writeInt32LE( utils.streamChecksum(null, this.checksum), SIZES.EOS, true )
 	} else {
 		var eos = new Buffer(SIZES.EOS)
 	}
