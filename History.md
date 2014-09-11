@@ -1,3 +1,9 @@
+0.3.13 / 2014-09-11
+===================
+
+* Issue #19: fixed regression in Node wrt invalid checksums
+  (nodejs and browserify Buffer.readInt32LE() are incompatible)
+
 0.3.12 / 2014-09-03
 ===================
 
