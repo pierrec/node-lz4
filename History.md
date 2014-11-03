@@ -1,3 +1,8 @@
+0.3.14 / 2014-11-03
+===================
+
+* Issue #22: pos variable is not in read_DataBlockChecksum
+
 0.3.13 / 2014-09-11
 ===================
 

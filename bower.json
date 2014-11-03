@@ -1,0 +1,27 @@
+{
+  "name": "js-lz4",
+  "version": "0.3.13",
+  "homepage": "https://github.com/pierrec/node-lz4",
+  "authors": [
+    "Pierre Curto <pierre.curto@gmail.com>"
+  ],
+  "description": "LZ4 streaming compression and decompression",
+  "main": "build/lz4.js",
+  "moduleType": [
+    "node"
+  ],
+  "keywords": [
+    "lz4",
+    "compression",
+    "decompression",
+    "stream"
+  ],
+  "license": "MIT",
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ]
+}
