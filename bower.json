@@ -1,6 +1,6 @@
 {
   "name": "js-lz4",
-  "version": "0.3.13",
+  "version": "0.3.15",
   "homepage": "https://github.com/pierrec/node-lz4",
   "authors": [
     "Pierre Curto <pierre.curto@gmail.com>"
