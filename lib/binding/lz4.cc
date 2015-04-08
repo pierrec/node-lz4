@@ -3,6 +3,7 @@
 
 #include <node.h>
 #include <node_buffer.h>
+#include <nan.h>
 
 #include "../../deps/lz4/lz4.h"
 #include "../../deps/lz4/lz4hc.h"
@@ -16,18 +17,18 @@ using namespace v8;
 // Simple functions
 
 // {Buffer} input, {Buffer} output
-Handle<Value> LZ4Compress(const Arguments& args) {
-  HandleScope scope;
+NAN_METHOD(LZ4Compress) {
+  NanScope();
 
   uint32_t alen = args.Length();
   if (alen < 2 && alen > 4) {
-    ThrowException(Exception::Error(String::New("Wrong number of arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
+    NanReturnUndefined();
   }
 
   if (!Buffer::HasInstance(args[0]) || !Buffer::HasInstance(args[1])) {
-    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::TypeError(NanNew<String>("Wrong arguments")));
+    NanReturnUndefined();
   }
   Local<Object> input = args[0]->ToObject();
   Local<Object> output = args[1]->ToObject();
@@ -38,160 +39,165 @@ Handle<Value> LZ4Compress(const Arguments& args) {
   switch (alen) {
   case 4:
     if (!args[3]->IsUint32()) {
-      ThrowException(Exception::TypeError(String::New("Invalid endIdx")));
-      return scope.Close(Undefined());
+      NanThrowError(Exception::TypeError(NanNew<String>("Invalid endIdx")));
+      NanReturnUndefined();
     }
     if (!args[2]->IsUint32()) {
-      ThrowException(Exception::TypeError(String::New("Invalid startIdx")));
-      return scope.Close(Undefined());
+      NanThrowError(Exception::TypeError(NanNew<String>("Invalid startIdx")));
+      NanReturnUndefined();
     }
     sIdx = args[2]->Uint32Value();
     eIdx = args[3]->Uint32Value();
-    result = Integer::NewFromUnsigned(LZ4_compress_limitedOutput(Buffer::Data(input),
-                                                              Buffer::Data(output) + sIdx,
-                                                              Buffer::Length(input),
-                                                              eIdx - sIdx)
-                                                  );
+    result = NanNew<Integer>(LZ4_compress_limitedOutput(Buffer::Data(input),
+                                                        Buffer::Data(output) + sIdx,
+                                                        Buffer::Length(input),
+                                                        eIdx - sIdx)
+                            );
     break;
   case 3:
     if (!args[2]->IsUint32()) {
-      ThrowException(Exception::TypeError(String::New("Invalid startIdx")));
-      return scope.Close(Undefined());
+      NanThrowError(Exception::TypeError(NanNew<String>("Invalid startIdx")));
+      NanReturnUndefined();
     }
     sIdx = args[2]->Uint32Value();
   case 2:
-    result = Integer::NewFromUnsigned(LZ4_compress(Buffer::Data(input),
-                                                              Buffer::Data(output) + sIdx,
-                                                              Buffer::Length(input))
-                                                  );
+    result = NanNew<Integer>(LZ4_compress(Buffer::Data(input),
+                                          Buffer::Data(output) + sIdx,
+                                          Buffer::Length(input))
+                            );
   }
 
-  return scope.Close(result->ToUint32());
+  NanReturnValue(result);
 }
 
 // {Buffer} input, {Buffer} output
-Handle<Value> LZ4CompressHC(const Arguments& args) {
-  HandleScope scope;
+NAN_METHOD(LZ4CompressHC) {
+  NanScope();
 
   if (args.Length() != 2) {
-    ThrowException(Exception::Error(String::New("Wrong number of arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
+    NanReturnUndefined();
   }
 
   if (!Buffer::HasInstance(args[0]) || !Buffer::HasInstance(args[1])) {
-    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::TypeError(NanNew<String>("Wrong arguments")));
+    NanReturnUndefined();
   }
 
   Local<Object> input = args[0]->ToObject();
   Local<Object> output = args[1]->ToObject();
 
-  Local<Integer> result = Integer::NewFromUnsigned(LZ4_compressHC(Buffer::Data(input),
-                                                            Buffer::Data(output),
-                                                            Buffer::Length(input))
-                                                );
-  return scope.Close(result->ToUint32());
+  Local<Integer> result = NanNew<Integer>(LZ4_compressHC(Buffer::Data(input),
+                                                         Buffer::Data(output),
+                                                         Buffer::Length(input))
+                                         );
+  NanReturnValue(result);
 }
 
 // Advanced functions
 
 // {Integer} Buffer size
-Handle<Value> LZ4CompressBound(const Arguments& args) {
-  HandleScope scope;
+NAN_METHOD(LZ4CompressBound) {
+  NanScope();
 
   if (args.Length() != 1) {
-    ThrowException(Exception::Error(String::New("Wrong number of arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
+    NanReturnUndefined();
   }
 
   if (!args[0]->IsUint32()) {
-    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::TypeError(NanNew<String>("Wrong arguments")));
+    NanReturnUndefined();
   }
 
   uint32_t size = args[0]->Uint32Value();
 
-  Local<Integer> result = Integer::NewFromUnsigned(LZ4_compressBound(size));
-  return scope.Close(result->ToUint32());
+  NanReturnValue(
+    NanNew<Integer>(LZ4_compressBound(size))
+  );
 }
 
 // {Buffer} input, {Buffer} output, {Integer} maxOutputSize
-Handle<Value> LZ4CompressLimited(const Arguments& args) {
-  HandleScope scope;
+NAN_METHOD(LZ4CompressLimited) {
+  NanScope();
 
   if (args.Length() != 3) {
-    ThrowException(Exception::Error(String::New("Wrong number of arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
+    NanReturnUndefined();
   }
 
   if (!Buffer::HasInstance(args[0]) || !Buffer::HasInstance(args[1])) {
-    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::TypeError(NanNew<String>("Wrong arguments")));
+    NanReturnUndefined();
   }
 
   if (!args[2]->IsUint32()) {
-    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::TypeError(NanNew<String>("Wrong arguments")));
+    NanReturnUndefined();
   }
 
   Local<Object> input = args[0]->ToObject();
   Local<Object> output = args[1]->ToObject();
   uint32_t size = args[2]->Uint32Value();
 
-  Local<Integer> result = Integer::NewFromUnsigned(LZ4_compress_limitedOutput(Buffer::Data(input),
-                                                            Buffer::Data(output),
-                                                            Buffer::Length(input),
-                                                            size)
-                                                );
-  return scope.Close(result->ToUint32());
+  Local<Integer> result = NanNew<Integer>(LZ4_compress_limitedOutput(Buffer::Data(input),
+                                                                     Buffer::Data(output),
+                                                                     Buffer::Length(input),
+                                                                     size)
+                                         );
+  NanReturnValue(result);
 }
 
 // {Buffer} input, {Buffer} output, {Integer} maxOutputSize
-Handle<Value> LZ4CompressHCLimited(const Arguments& args) {
-  HandleScope scope;
+NAN_METHOD(LZ4CompressHCLimited) {
+  NanScope();
 
   if (args.Length() != 3) {
-    ThrowException(Exception::Error(String::New("Wrong number of arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
+    NanReturnUndefined();
   }
 
   if (!Buffer::HasInstance(args[0]) || !Buffer::HasInstance(args[1])) {
-    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::TypeError(NanNew<String>("Wrong arguments")));
+    NanReturnUndefined();
   }
 
   if (!args[2]->IsUint32()) {
-    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::TypeError(NanNew<String>("Wrong arguments")));
+    NanReturnUndefined();
   }
 
   Local<Object> input = args[0]->ToObject();
   Local<Object> output = args[1]->ToObject();
   uint32_t size = args[2]->Uint32Value();
 
-  Local<Integer> result = Integer::NewFromUnsigned(LZ4_compressHC_limitedOutput(Buffer::Data(input),
-                                                            Buffer::Data(output),
-                                                            Buffer::Length(input),
-                                                            size)
-                                                );
-  return scope.Close(result->ToUint32());
+  Local<Integer> result = NanNew<Integer>(LZ4_compressHC_limitedOutput(Buffer::Data(input),
+                                                                       Buffer::Data(output),
+                                                                       Buffer::Length(input),
+                                                                       size)
+                                         );
+  NanReturnValue(result);
+}
+
+void null_cb(char* data, void* hint) {
+  
 }
 
 //-----------------------------------------------------------------------------
 // LZ4 Stream
 //-----------------------------------------------------------------------------
 // {Buffer} input
-Handle<Value> LZ4Stream_create(const Arguments& args) {
-  HandleScope scope;
+NAN_METHOD(LZ4Stream_create) {
+  NanScope();
 
   if (args.Length() != 1) {
-    ThrowException(Exception::Error(String::New("Wrong number of arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
+    NanReturnUndefined();
   }
 
   if (!Buffer::HasInstance(args[0])) {
-    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::TypeError(NanNew<String>("Wrong arguments")));
+    NanReturnUndefined();
   }
 
   Local<Object> input = args[0]->ToObject();
@@ -199,53 +205,53 @@ Handle<Value> LZ4Stream_create(const Arguments& args) {
   void* p = LZ4_create( Buffer::Data(input) );
 
   if (p == NULL) {
-    return scope.Close(Undefined());
+    NanReturnUndefined();
   }
 
-  Buffer *buf = Buffer::New( (char *)p, LZ4_sizeofStreamState() );
+  Local<Object> handle = NanNewBufferHandle((char *) p, LZ4_sizeofStreamState(), null_cb, NULL);
 
-  return scope.Close(buf->handle_);
+  NanReturnValue(handle);
 }
 
 // {Buffer} lz4 data struct, {Buffer} input, {Buffer} output
-Handle<Value> LZ4Stream_compress_continue(const Arguments& args) {
-  HandleScope scope;
+NAN_METHOD(LZ4Stream_compress_continue) {
+  NanScope();
 
   if (args.Length() != 3) {
-    ThrowException(Exception::Error(String::New("Wrong number of arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
+    NanReturnUndefined();
   }
 
   if (!Buffer::HasInstance(args[0]) || !Buffer::HasInstance(args[1]) || !Buffer::HasInstance(args[2])) {
-    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::TypeError(NanNew<String>("Wrong arguments")));
+    NanReturnUndefined();
   }
 
   Local<Object> lz4ds = args[0]->ToObject();
   Local<Object> input = args[1]->ToObject();
   Local<Object> output = args[2]->ToObject();
 
-  Local<Integer> result = Integer::NewFromUnsigned(LZ4_compress_continue(
-                                                            Buffer::Data(lz4ds),
-                                                            Buffer::Data(input),
-                                                            Buffer::Data(output),
-                                                            Buffer::Length(input))
-                                                );
-  return scope.Close(result->ToUint32());
+  Local<Integer> result = NanNew<Integer>(LZ4_compress_continue(
+                                            Buffer::Data(lz4ds),
+                                            Buffer::Data(input),
+                                            Buffer::Data(output),
+                                            Buffer::Length(input))
+                                          );
+  NanReturnValue(result);
 }
 
 // {Buffer} input, {Buffer} lz4 data struct
-Handle<Value> LZ4Stream_slideInputBuffer(const Arguments& args) {
-  HandleScope scope;
+NAN_METHOD(LZ4Stream_slideInputBuffer) {
+  NanScope();
 
   if (args.Length() != 2) {
-    ThrowException(Exception::Error(String::New("Wrong number of arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
+    NanReturnUndefined();
   }
 
   if (!Buffer::HasInstance(args[0]) || !Buffer::HasInstance(args[1])) {
-    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::TypeError(NanNew<String>("Wrong arguments")));
+    NanReturnUndefined();
   }
 
   Local<Object> lz4ds = args[0]->ToObject();
@@ -256,45 +262,45 @@ Handle<Value> LZ4Stream_slideInputBuffer(const Arguments& args) {
   char* input_current = (char *)Buffer::Data(input);
 
   // Return the position of the next block
-  return scope.Close( Integer::NewFromUnsigned((int)(input_next_block - input_current)) );
+  NanReturnValue(NanNew<Integer>((int)(input_next_block - input_current)));
 }
 
 // {Buffer} lz4 data struct
-Handle<Value> LZ4Stream_free(const Arguments& args) {
-  HandleScope scope;
+NAN_METHOD(LZ4Stream_free) {
+  NanScope();
 
   if (args.Length() != 1) {
-    ThrowException(Exception::Error(String::New("Wrong number of arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
+    NanReturnUndefined();
   }
 
   if (!Buffer::HasInstance(args[0])) {
-    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::TypeError(NanNew<String>("Wrong arguments")));
+    NanReturnUndefined();
   }
 
   Local<Object> lz4ds = args[0]->ToObject();
   int res = LZ4_free( Buffer::Data(lz4ds) );
 
-  return scope.Close( Integer::New(res) );
+  NanReturnValue(NanNew<Integer>(res));
 }
 
 //-----------------------------------------------------------------------------
 // LZ4 Uncompress
 //-----------------------------------------------------------------------------
 // {Buffer} input, {Buffer} output
-Handle<Value> LZ4Uncompress(const Arguments& args) {
-  HandleScope scope;
+NAN_METHOD(LZ4Uncompress) {
+  NanScope();
 
   uint32_t alen = args.Length();
   if (alen < 2 && alen > 4) {
-    ThrowException(Exception::Error(String::New("Wrong number of arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
+    NanReturnUndefined();
   }
 
   if (!Buffer::HasInstance(args[0]) || !Buffer::HasInstance(args[1])) {
-    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::TypeError(NanNew<String>("Wrong arguments")));
+    NanReturnUndefined();
   }
   Local<Object> input = args[0]->ToObject();
   Local<Object> output = args[1]->ToObject();
@@ -305,76 +311,79 @@ Handle<Value> LZ4Uncompress(const Arguments& args) {
   switch (alen) {
   case 4:
     if (!args[3]->IsUint32()) {
-      ThrowException(Exception::TypeError(String::New("Invalid endIdx")));
-      return scope.Close(Undefined());
+      NanThrowError(Exception::TypeError(NanNew<String>("Invalid endIdx")));
+      NanReturnUndefined();
     }
     if (!args[2]->IsUint32()) {
-      ThrowException(Exception::TypeError(String::New("Invalid startIdx")));
-      return scope.Close(Undefined());
+      NanThrowError(Exception::TypeError(NanNew<String>("Invalid startIdx")));
+      NanReturnUndefined();
     }
     sIdx = args[2]->Uint32Value();
     eIdx = args[3]->Uint32Value();
-    result = Integer::NewFromUnsigned(LZ4_decompress_safe(Buffer::Data(input) + sIdx,
-                                                            Buffer::Data(output),
-                                                            eIdx - sIdx,
-                                                            Buffer::Length(output))
-                                                );
+    result = NanNew<Integer>(LZ4_decompress_safe(Buffer::Data(input) + sIdx,
+                                                 Buffer::Data(output),
+                                                 eIdx - sIdx,
+                                                 Buffer::Length(output))
+                            );
     break;
   case 3:
     if (!args[2]->IsInt32()) {
-      ThrowException(Exception::TypeError(String::New("Invalid startIdx")));
-      return scope.Close(Undefined());
+      NanThrowError(Exception::TypeError(NanNew<String>("Invalid startIdx")));
+      NanReturnUndefined();
     }
     sIdx = args[2]->Uint32Value();
   case 2:
-    result = Integer::NewFromUnsigned(LZ4_decompress_safe(Buffer::Data(input) + sIdx,
-                                                            Buffer::Data(output),
-                                                            eIdx - sIdx,
-                                                            Buffer::Length(output))
-                                                );
+    result = NanNew<Integer>(LZ4_decompress_safe(Buffer::Data(input) + sIdx,
+                                                 Buffer::Data(output),
+                                                 eIdx - sIdx,
+                                                 Buffer::Length(output))
+                            );
   }
 
-  return scope.Close(result->ToUint32());
+  NanReturnValue(result);
 }
 
 // {Buffer} input, {Buffer} output
-Handle<Value> LZ4Uncompress_fast(const Arguments& args) {
-  HandleScope scope;
+NAN_METHOD(LZ4Uncompress_fast) {
+  NanScope();
 
   if (args.Length() != 2) {
-    ThrowException(Exception::Error(String::New("Wrong number of arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
+    NanReturnUndefined();
   }
 
   if (!Buffer::HasInstance(args[0]) || !Buffer::HasInstance(args[1])) {
-    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::TypeError(NanNew<String>("Wrong arguments")));
+    NanReturnUndefined();
   }
 
   Local<Object> input = args[0]->ToObject();
   Local<Object> output = args[1]->ToObject();
 
-  Local<Integer> result = Integer::NewFromUnsigned(LZ4_decompress_fast(Buffer::Data(input),
-                                                            Buffer::Data(output),
-                                                            Buffer::Length(output))
-                                                );
-  return scope.Close(result->ToUint32());
+  Local<Integer> result = NanNew<Integer>(LZ4_decompress_fast(Buffer::Data(input),
+                                                              Buffer::Data(output),
+                                                              Buffer::Length(output))
+                                         );
+  NanReturnValue(result);
 }
 
 void init_lz4(Handle<Object> target) {
-  NODE_SET_METHOD(target, "compressBound", LZ4CompressBound);
-  NODE_SET_METHOD(target, "compress", LZ4Compress);
-  NODE_SET_METHOD(target, "compressLimited", LZ4CompressLimited);
-  NODE_SET_METHOD(target, "lz4s_create", LZ4Stream_create);
-  NODE_SET_METHOD(target, "lz4s_compress_continue", LZ4Stream_compress_continue);
-  NODE_SET_METHOD(target, "lz4s_slide_input", LZ4Stream_slideInputBuffer);
-  NODE_SET_METHOD(target, "lz4s_free", LZ4Stream_free);
+  NanScope();
 
-  NODE_SET_METHOD(target, "compressHC", LZ4CompressHC);
-  NODE_SET_METHOD(target, "compressHCLimited", LZ4CompressHCLimited);
+  target->Set(NanNew<String>("compressBound"), NanNew<FunctionTemplate>(LZ4CompressBound)->GetFunction());
+  target->Set(NanNew<String>("compress"), NanNew<FunctionTemplate>(LZ4Compress)->GetFunction());
+  target->Set(NanNew<String>("compressLimited"), NanNew<FunctionTemplate>(LZ4CompressLimited)->GetFunction());
 
-  NODE_SET_METHOD(target, "uncompress", LZ4Uncompress);
-  NODE_SET_METHOD(target, "uncompress_fast", LZ4Uncompress_fast);
+  target->Set(NanNew<String>("lz4s_create"), NanNew<FunctionTemplate>(LZ4Stream_create)->GetFunction());
+  target->Set(NanNew<String>("lz4s_compress_continue"), NanNew<FunctionTemplate>(LZ4Stream_compress_continue)->GetFunction());
+  target->Set(NanNew<String>("lz4s_slide_input"), NanNew<FunctionTemplate>(LZ4Stream_slideInputBuffer)->GetFunction());
+  target->Set(NanNew<String>("lz4s_free"), NanNew<FunctionTemplate>(LZ4Stream_free)->GetFunction());
+
+  target->Set(NanNew<String>("compressHC"), NanNew<FunctionTemplate>(LZ4CompressHC)->GetFunction());
+  target->Set(NanNew<String>("compressHCLimited"), NanNew<FunctionTemplate>(LZ4CompressHCLimited)->GetFunction());
+
+  target->Set(NanNew<String>("uncompress"), NanNew<FunctionTemplate>(LZ4Uncompress)->GetFunction());
+  target->Set(NanNew<String>("uncompress_fast"), NanNew<FunctionTemplate>(LZ4Uncompress_fast)->GetFunction());
 }
 
 NODE_MODULE(lz4, init_lz4)

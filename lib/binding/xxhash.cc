@@ -3,6 +3,7 @@
 
 #include <node.h>
 #include <node_buffer.h>
+#include <nan.h>
 
 #include "../../deps/lz4/programs/xxhash.h"
 
@@ -13,17 +14,17 @@ using namespace v8;
 // xxHash
 //-----------------------------------------------------------------------------
 // {Buffer} input, {Integer} seed (optional)
-Handle<Value> xxHash (const Arguments& args) {
-  HandleScope scope;
+NAN_METHOD(xxHash) {
+  NanScope();
 
   if (args.Length() == 0) {
-    ThrowException(Exception::Error(String::New("Wrong number of arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
+    NanReturnUndefined();
   }
 
   if (!Buffer::HasInstance(args[0])) {
-    ThrowException(Exception::TypeError(String::New("Wrong argument: Buffer expected")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::TypeError(NanNew<String>("Wrong argument: Buffer expected")));
+    NanReturnUndefined();
   }
 
   Local<Object> input = args[0]->ToObject();
@@ -32,46 +33,46 @@ Handle<Value> xxHash (const Arguments& args) {
     seed = args[1]->Uint32Value();
   }
 
-  Local<Integer> result = Integer::NewFromUnsigned(XXH32(Buffer::Data(input)
-                                                , Buffer::Length(input)
-                                                , seed
-                                                ));
-  return scope.Close(result->ToUint32());
+  Local<Integer> result = NanNew<Integer>(XXH32(Buffer::Data(input),
+                                                Buffer::Length(input),
+                                                seed)
+                                         );
+  NanReturnValue(result);
 }
 
 // {Integer} seed
-Handle<Value> xxHash_init (const Arguments& args) {
-  HandleScope scope;
+NAN_METHOD(xxHash_init) {
+  NanScope();
 
   if (args.Length() == 0) {
-    ThrowException(Exception::Error(String::New("Wrong number of arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
+    NanReturnUndefined();
   }
 
   if (!args[0]->IsUint32()) {
-    ThrowException(Exception::TypeError(String::New("Wrong argument: Integer expected")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::TypeError(NanNew<String>("Wrong argument: Integer expected")));
+    NanReturnUndefined();
   }
 
   uint32_t seed = args[0]->Uint32Value();
 
-  Buffer *buf = Buffer::New( (char *)XXH32_init(seed), XXH32_sizeofState() );
+  Local<Object> handle = NanNewBufferHandle( (char *)XXH32_init(seed), XXH32_sizeofState() );
 
-  return scope.Close(buf->handle_);
+  NanReturnValue(handle);
 }
 
 // {Buffer} state {Buffer} input {Integer} seed
-Handle<Value> xxHash_update (const Arguments& args) {
-  HandleScope scope;
+NAN_METHOD(xxHash_update) {
+  NanScope();
 
   if (args.Length() != 2) {
-    ThrowException(Exception::Error(String::New("Wrong number of arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
+    NanReturnUndefined();
   }
 
   if (!Buffer::HasInstance(args[0]) || !Buffer::HasInstance(args[1])) {
-    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::TypeError(NanNew<String>("Wrong arguments")));
+    NanReturnUndefined();
   }
 
   int err_code = XXH32_update(
@@ -80,35 +81,37 @@ Handle<Value> xxHash_update (const Arguments& args) {
   , Buffer::Length(args[1])
   );
 
-  return scope.Close( Integer::NewFromUnsigned(err_code)->ToUint32() );
+  NanReturnValue(NanNew<Integer>(err_code));
 }
 
 // {Buffer} state
-Handle<Value> xxHash_digest (const Arguments& args) {
-  HandleScope scope;
+NAN_METHOD(xxHash_digest) {
+  NanScope();
 
   if (args.Length() != 1) {
-    ThrowException(Exception::Error(String::New("Wrong number of arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
+    NanReturnUndefined();
   }
 
   if (!Buffer::HasInstance(args[0])) {
-    ThrowException(Exception::TypeError(String::New("Wrong arguments")));
-    return scope.Close(Undefined());
+    NanThrowError(Exception::TypeError(NanNew<String>("Wrong arguments")));
+    NanReturnUndefined();
   }
 
-  Local<Integer> res = Integer::NewFromUnsigned(
+  Local<Integer> res = NanNew<Integer>(
     XXH32_digest( Buffer::Data(args[0]) )
   );
 
-  return scope.Close(res->ToUint32());
+  NanReturnValue(res);
 }
 
 void init_xxhash(Handle<Object> target) {
-  NODE_SET_METHOD(target, "xxHash", xxHash);
-  NODE_SET_METHOD(target, "init", xxHash_init);
-  NODE_SET_METHOD(target, "update", xxHash_update);
-  NODE_SET_METHOD(target, "digest", xxHash_digest);
+  NanScope();
+
+  target->Set(NanNew<String>("xxHash"), NanNew<FunctionTemplate>(xxHash)->GetFunction());
+  target->Set(NanNew<String>("init"), NanNew<FunctionTemplate>(xxHash_init)->GetFunction());
+  target->Set(NanNew<String>("update"), NanNew<FunctionTemplate>(xxHash_update)->GetFunction());
+  target->Set(NanNew<String>("digest"), NanNew<FunctionTemplate>(xxHash_digest)->GetFunction());
 }
 
 NODE_MODULE(xxhash, init_xxhash)
