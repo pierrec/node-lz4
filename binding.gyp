@@ -7,6 +7,9 @@
         'deps/lz4/programs/xxhash.h',
         'deps/lz4/programs/xxhash.c',
       ],
+      'include_dirs': [
+        '<!(node -e "require(\'nan\')")'
+      ],
       'cflags': [ '-O3' ],
     },
     {
@@ -17,6 +20,9 @@
         'deps/lz4/lz4.c',
         'deps/lz4/lz4hc.h',
         'deps/lz4/lz4hc.c',
+      ],
+      'include_dirs': [
+        '<!(node -e "require(\'nan\')")'
       ],
       'cflags': [ '-O3' ],
     },
