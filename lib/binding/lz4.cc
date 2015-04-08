@@ -179,6 +179,10 @@ NAN_METHOD(LZ4CompressHCLimited) {
   NanReturnValue(result);
 }
 
+void null_cb(char* data, void* hint) {
+  
+}
+
 //-----------------------------------------------------------------------------
 // LZ4 Stream
 //-----------------------------------------------------------------------------
@@ -204,7 +208,7 @@ NAN_METHOD(LZ4Stream_create) {
     NanReturnUndefined();
   }
 
-  Local<Object> handle = NanNewBufferHandle( (char *)p, LZ4_sizeofStreamState() );
+  Local<Object> handle = NanNewBufferHandle((char *) p, LZ4_sizeofStreamState(), null_cb, NULL);
 
   NanReturnValue(handle);
 }
