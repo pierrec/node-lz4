@@ -9,8 +9,8 @@ Version 0.2 does not support the legacy format, only the one as of "LZ4 Streamin
 
 With NodeJS:
 
-	git clone https://github.com/Cyan4973/lz4.git
-        cd lz4
+	git clone https://github.com/pierrec/node-lz4.git
+	cd node-lz4
 	git submodule update --init --recursive
 	npm install
 
