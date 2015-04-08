@@ -5,7 +5,7 @@
 #include <node_buffer.h>
 #include <nan.h>
 
-#include "../../deps/lz4/programs/xxhash.h"
+#include "../../deps/lz4/lib/xxhash.h"
 
 using namespace node;
 using namespace v8;
@@ -56,7 +56,9 @@ NAN_METHOD(xxHash_init) {
 
   uint32_t seed = args[0]->Uint32Value();
 
-  Local<Object> handle = NanNewBufferHandle( (char *)XXH32_init(seed), XXH32_sizeofState() );
+  XXH32_state_t* state = XXH32_createState();
+  XXH32_reset(state, seed);
+  Local<Object> handle = NanNewBufferHandle( (char *) state, sizeof(XXH32_state_t) );
 
   NanReturnValue(handle);
 }
@@ -76,9 +78,9 @@ NAN_METHOD(xxHash_update) {
   }
 
   int err_code = XXH32_update(
-    Buffer::Data(args[0])
-  , Buffer::Data(args[1])
-  , Buffer::Length(args[1])
+    (XXH32_state_t*) Buffer::Data(args[0]),
+    Buffer::Data(args[1]),
+    Buffer::Length(args[1])
   );
 
   NanReturnValue(NanNew<Integer>(err_code));
@@ -99,7 +101,7 @@ NAN_METHOD(xxHash_digest) {
   }
 
   Local<Integer> res = NanNew<Integer>(
-    XXH32_digest( Buffer::Data(args[0]) )
+    XXH32_digest( (XXH32_state_t*) Buffer::Data(args[0]) )
   );
 
   NanReturnValue(res);

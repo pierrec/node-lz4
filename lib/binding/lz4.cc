@@ -5,8 +5,8 @@
 #include <node_buffer.h>
 #include <nan.h>
 
-#include "../../deps/lz4/lz4.h"
-#include "../../deps/lz4/lz4hc.h"
+#include "../../deps/lz4/lib/lz4.h"
+#include "../../deps/lz4/lib/lz4hc.h"
 
 using namespace node;
 using namespace v8;
@@ -232,11 +232,11 @@ NAN_METHOD(LZ4Stream_compress_continue) {
   Local<Object> output = args[2]->ToObject();
 
   Local<Integer> result = NanNew<Integer>(LZ4_compress_continue(
-                                            Buffer::Data(lz4ds),
+                                            (LZ4_stream_t*) Buffer::Data(lz4ds),
                                             Buffer::Data(input),
                                             Buffer::Data(output),
                                             Buffer::Length(input))
-                                          );
+                                         );
   NanReturnValue(result);
 }
 
@@ -280,7 +280,7 @@ NAN_METHOD(LZ4Stream_free) {
   }
 
   Local<Object> lz4ds = args[0]->ToObject();
-  int res = LZ4_free( Buffer::Data(lz4ds) );
+  int res = LZ4_freeStream( (LZ4_stream_t*) Buffer::Data(lz4ds) );
 
   NanReturnValue(NanNew<Integer>(res));
 }
