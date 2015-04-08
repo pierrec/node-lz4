@@ -43,6 +43,12 @@ Within the browser, using `build/lz4.js`:
 	console.log( "uncompressed data", uncompressed )
 	</script>
 
+
+From github cloning, after having made sure that node and node-gyp are properly installed:
+
+	npm i
+	node-gyp rebuild
+
 See below for more LZ4 functions.
 
 

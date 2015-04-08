@@ -1,3 +1,8 @@
+0.4.0 / 2015-04-08
+==================
+
+* Support for node 0.12 and iojs 1.6. Thanks to EricMCornelius (github.com/EricMCornelius) for his merge request.
+
 0.3.15 / 2015-03-07
 ===================
 
