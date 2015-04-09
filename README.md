@@ -5,6 +5,14 @@
 NB.
 Version 0.2 does not support the legacy format, only the one as of "LZ4 Streaming Format 1.4". Use version 0.1 if required.
 
+## Build
+
+With NodeJS:
+
+	git clone https://github.com/pierrec/node-lz4.git
+	cd node-lz4
+	git submodule update --init --recursive
+	npm install
 
 ## Install
 
