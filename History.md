@@ -1,3 +1,8 @@
+0.4.1 / 2015-08-14
+==================
+
+* Issue #31: LZ4 Javascript compress function corrupts data
+
 0.4.0 / 2015-04-08
 ==================
 
