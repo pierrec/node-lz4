@@ -15,105 +15,103 @@ using namespace v8;
 //-----------------------------------------------------------------------------
 // {Buffer} input, {Integer} seed (optional)
 NAN_METHOD(xxHash) {
-  NanScope();
+  Nan::HandleScope scope;
 
-  if (args.Length() == 0) {
-    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
-    NanReturnUndefined();
+  if (info.Length() == 0) {
+    Nan::ThrowError("Wrong number of arguments");
+    return;
   }
 
-  if (!Buffer::HasInstance(args[0])) {
-    NanThrowError(Exception::TypeError(NanNew<String>("Wrong argument: Buffer expected")));
-    NanReturnUndefined();
+  if (!Buffer::HasInstance(info[0])) {
+    Nan::ThrowTypeError("Wrong argument: Buffer expected");
+    return;
   }
 
-  Local<Object> input = args[0]->ToObject();
+  Local<Object> input = info[0]->ToObject();
   uint32_t seed = 0;
-  if (args[1]->IsUint32()) {
-    seed = args[1]->Uint32Value();
+  if (info[1]->IsUint32()) {
+    seed = info[1]->Uint32Value();
   }
 
-  Local<Integer> result = NanNew<Integer>(XXH32(Buffer::Data(input),
+  Local<Integer> result = Nan::New<Integer>(XXH32(Buffer::Data(input),
                                                 Buffer::Length(input),
                                                 seed)
                                          );
-  NanReturnValue(result);
+  info.GetReturnValue().Set(result);
 }
 
 // {Integer} seed
 NAN_METHOD(xxHash_init) {
-  NanScope();
+  Nan::HandleScope scope;
 
-  if (args.Length() == 0) {
-    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
-    NanReturnUndefined();
+  if (info.Length() == 0) {
+    Nan::ThrowError("Wrong number of arguments");
+    return;
   }
 
-  if (!args[0]->IsUint32()) {
-    NanThrowError(Exception::TypeError(NanNew<String>("Wrong argument: Integer expected")));
-    NanReturnUndefined();
+  if (!info[0]->IsUint32()) {
+    Nan::ThrowTypeError("Wrong argument: Integer expected");
+    return;
   }
 
-  uint32_t seed = args[0]->Uint32Value();
+  uint32_t seed = info[0]->Uint32Value();
 
   XXH32_state_t* state = XXH32_createState();
   XXH32_reset(state, seed);
-  Local<Object> handle = NanNewBufferHandle( (char *) state, sizeof(XXH32_state_t) );
+  Nan::MaybeLocal<Object> handle = Nan::NewBuffer((char *)state, sizeof(XXH32_state_t));
 
-  NanReturnValue(handle);
+  info.GetReturnValue().Set(handle.ToLocalChecked());
 }
 
 // {Buffer} state {Buffer} input {Integer} seed
 NAN_METHOD(xxHash_update) {
-  NanScope();
+  Nan::HandleScope scope;
 
-  if (args.Length() != 2) {
-    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
-    NanReturnUndefined();
+  if (info.Length() != 2) {
+    Nan::ThrowError("Wrong number of arguments");
+    return;
   }
 
-  if (!Buffer::HasInstance(args[0]) || !Buffer::HasInstance(args[1])) {
-    NanThrowError(Exception::TypeError(NanNew<String>("Wrong arguments")));
-    NanReturnUndefined();
+  if (!Buffer::HasInstance(info[0]) || !Buffer::HasInstance(info[1])) {
+    Nan::ThrowTypeError("Wrong arguments");
+    return;
   }
 
   int err_code = XXH32_update(
-    (XXH32_state_t*) Buffer::Data(args[0]),
-    Buffer::Data(args[1]),
-    Buffer::Length(args[1])
+    (XXH32_state_t*) Buffer::Data(info[0]),
+    Buffer::Data(info[1]),
+    Buffer::Length(info[1])
   );
 
-  NanReturnValue(NanNew<Integer>(err_code));
+  info.GetReturnValue().Set(Nan::New<Integer>(err_code));
 }
 
 // {Buffer} state
 NAN_METHOD(xxHash_digest) {
-  NanScope();
+  Nan::HandleScope scope;
 
-  if (args.Length() != 1) {
-    NanThrowError(Exception::Error(NanNew<String>("Wrong number of arguments")));
-    NanReturnUndefined();
+  if (info.Length() != 1) {
+    Nan::ThrowError("Wrong number of arguments");
+    return;
   }
 
-  if (!Buffer::HasInstance(args[0])) {
-    NanThrowError(Exception::TypeError(NanNew<String>("Wrong arguments")));
-    NanReturnUndefined();
+  if (!Buffer::HasInstance(info[0])) {
+    Nan::ThrowTypeError("Wrong arguments");
+    return;
   }
 
-  Local<Integer> res = NanNew<Integer>(
-    XXH32_digest( (XXH32_state_t*) Buffer::Data(args[0]) )
+  Local<Integer> res = Nan::New<Integer>(
+    XXH32_digest( (XXH32_state_t*) Buffer::Data(info[0]) )
   );
 
-  NanReturnValue(res);
+  info.GetReturnValue().Set(res);
 }
 
-void init_xxhash(Handle<Object> target) {
-  NanScope();
-
-  target->Set(NanNew<String>("xxHash"), NanNew<FunctionTemplate>(xxHash)->GetFunction());
-  target->Set(NanNew<String>("init"), NanNew<FunctionTemplate>(xxHash_init)->GetFunction());
-  target->Set(NanNew<String>("update"), NanNew<FunctionTemplate>(xxHash_update)->GetFunction());
-  target->Set(NanNew<String>("digest"), NanNew<FunctionTemplate>(xxHash_digest)->GetFunction());
+NAN_MODULE_INIT(init_xxhash) {
+  Nan::Export(target, "xxHash", xxHash);
+  Nan::Export(target, "init", xxHash_init);
+  Nan::Export(target, "update", xxHash_update);
+  Nan::Export(target, "digest", xxHash_digest);
 }
 
 NODE_MODULE(xxhash, init_xxhash)
