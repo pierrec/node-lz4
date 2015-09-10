@@ -1,3 +1,9 @@
+0.5.0 / 2015-09-10
+==================
+
+* Merged pull request #32 (thanks go to mog422)
+* Updated encoding tests to not depend on pre-encoded data
+
 0.4.1 / 2015-08-14
 ==================
 
