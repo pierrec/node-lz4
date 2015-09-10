@@ -35,7 +35,7 @@
   },
   "dependencies": {
     "cuint": "^0.2.0",
-    "nan": "^1.7.0",
+    "nan": "^2.0.9",
     "xxhashjs": "^0.1.1"
   },
   "devDependencies": {
