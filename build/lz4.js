@@ -41,6 +41,14 @@ exports.bindings = require('./binding')
  */
 var uint32 = require('cuint').UINT32
 
+if (!Math.imul) Math.imul = function imul(a, b) {
+	var ah = a >>> 16;
+	var al = a & 0xffff;
+	var bh = b >>> 16;
+	var bl = b & 0xffff;
+	return (al*bl + ((ah*bl + al*bh) << 16))|0;
+};
+
 /**
  * Decode a block. Assumptions: input contains all sequences of a 
  * chunk, output is large enough to receive the decoded data.
@@ -119,7 +127,7 @@ var
 ,	runBits 		= 8 - mlBits
 ,	runMask 		= (1 << runBits) - 1
 
-,	hasher 			= uint32(2654435761)
+,	hasher 			= 2654435761
 
 // CompressBound returns the maximum length of a lz4 block, given it's uncompressed length
 exports.compressBound = function (isize) {
@@ -127,8 +135,6 @@ exports.compressBound = function (isize) {
 		? 0
 		: (isize + (isize/255) + 16) | 0
 }
-
-exports.compressHC = exports.compress
 
 exports.compress = function (src, dst, sIdx, eIdx) {
 	// V8 optimization: non sparse array with integers
@@ -139,10 +145,11 @@ exports.compress = function (src, dst, sIdx, eIdx) {
 	return compressBlock(src, dst, 0, hashTable, sIdx || 0, eIdx || dst.length)
 }
 
+exports.compressHC = exports.compress
+
 exports.compressDependent = compressBlock
 
 function compressBlock (src, dst, pos, hashTable, sIdx, eIdx) {
-	var Hash = uint32() // Reusable unsigned 32 bits integer
 	var dpos = sIdx
 	var dlen = eIdx - sIdx
 	var anchor = 0
@@ -167,10 +174,7 @@ function compressBlock (src, dst, pos, hashTable, sIdx, eIdx) {
 			var sequenceLowBits = src[pos+1]<<8 | src[pos]
 			var sequenceHighBits = src[pos+3]<<8 | src[pos+2]
 			// compute hash for the current sequence
-			var hash = Hash.fromBits(sequenceLowBits, sequenceHighBits)
-							.multiply(hasher)
-							.shiftr(hashShift)
-							.toNumber()
+			var hash = Math.imul(sequenceLowBits | (sequenceHighBits << 16), hasher) >>> hashShift
 			// get the position of the sequence matching the hash
 			// NB. since 2 different sequences may have the same hash
 			// it is double-checked below
