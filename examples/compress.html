@@ -5,9 +5,9 @@
 <body>
 	<script type="text/javascript" src="../build/lz4.js"></script>
 	<script type="text/javascript">
+		var LZ4 = require('lz4')
 		function encodeBlock () {
 			var Buffer = require('buffer').Buffer
-			var LZ4 = require('lz4')
 
 			var str = document.getElementById('input').value
 			var input = new Buffer(str)
@@ -37,6 +37,7 @@
 			}
 		}
 	</script>
+	<div id="version"></div>
 	<div>
 		<label>Input data</label>
 		<div id="inputSize"></div>
@@ -52,5 +53,8 @@
 			<textarea id="output" rows="5" cols="50"></textarea>
 		</p>
 	</div>
+	<script type="text/javascript">
+		document.getElementById('version').innerHTML = "Version: " + LZ4.version
+	</script>
 </body>
 </html>

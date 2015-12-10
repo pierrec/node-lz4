@@ -1,3 +1,8 @@
+0.5.1 / 2015-12-10
+==================
+
+* Issue #37: reverted commit breaking encodeBlock. Thanks @jamievicary.
+
 0.5.0 / 2015-09-10
 ==================
 

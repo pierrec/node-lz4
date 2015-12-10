@@ -21,7 +21,7 @@ var startTime = Date.now()
 // native
 var compressedBlockSize = lz4.encodeBlock(input, output)
 // javascript
-// var compressedBlockSize = require('../lib/binding').compress(input, output)
+//var compressedBlockSize = require('../lib/binding').compress(input, output)
 
 // Timing
 var delta = Date.now() - startTime
