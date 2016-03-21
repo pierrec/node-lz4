@@ -182,7 +182,7 @@ NAN_METHOD(LZ4CompressHCLimited) {
 void null_cb(char* data, void* hint) {
   
 }
-
+/*
 //-----------------------------------------------------------------------------
 // LZ4 Stream
 //-----------------------------------------------------------------------------
@@ -284,7 +284,7 @@ NAN_METHOD(LZ4Stream_free) {
 
   info.GetReturnValue().Set(Nan::New<Integer>(res));
 }
-
+*/
 //-----------------------------------------------------------------------------
 // LZ4 Uncompress
 //-----------------------------------------------------------------------------
@@ -372,10 +372,10 @@ NAN_MODULE_INIT(init_lz4) {
   Nan::Export(target, "compress", LZ4Compress);
   Nan::Export(target, "compressLimited", LZ4CompressLimited);
 
-  Nan::Export(target, "lz4s_create", LZ4Stream_create);
-  Nan::Export(target, "lz4s_compress_continue", LZ4Stream_compress_continue);
-  Nan::Export(target, "lz4s_slide_input", LZ4Stream_slideInputBuffer);
-  Nan::Export(target, "lz4s_free", LZ4Stream_free);
+  // Nan::Export(target, "lz4s_create", LZ4Stream_create);
+  // Nan::Export(target, "lz4s_compress_continue", LZ4Stream_compress_continue);
+  // Nan::Export(target, "lz4s_slide_input", LZ4Stream_slideInputBuffer);
+  // Nan::Export(target, "lz4s_free", LZ4Stream_free);
 
   Nan::Export(target, "compressHC", LZ4CompressHC);
   Nan::Export(target, "compressHCLimited", LZ4CompressHCLimited);

@@ -1,3 +1,9 @@
+0.5.2 / 2016-03-21
+==================
+
+* Issue #36: Deprecated declarations. Thanks @ee99ee.
+* Updated LZ4 C code base with r131.
+
 0.5.1 / 2015-12-10
 ==================
 
