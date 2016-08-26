@@ -9,53 +9,61 @@ Version 0.2 does not support the legacy format, only the one as of "LZ4 Streamin
 
 With NodeJS:
 
-	git clone https://github.com/pierrec/node-lz4.git
-	cd node-lz4
-	git submodule update --init --recursive
-	npm install
+```shell
+git clone https://github.com/pierrec/node-lz4.git
+cd node-lz4
+git submodule update --init --recursive
+npm install
+```
 
 ## Install
 
 With NodeJS:
 
-	npm install lz4
+```shell
+npm install lz4
+```
 
 Within the browser, using `build/lz4.js`:
 
-	<script type="text/javascript" src="/path/to/lz4.js"></script>
-	<script type="text/javascript">
-	// Nodejs-like Buffer built-in
-	var Buffer = require('buffer').Buffer
-	var LZ4 = require('lz4')
+```html
+<script type="text/javascript" src="/path/to/lz4.js"></script>
+<script type="text/javascript">
+// Nodejs-like Buffer built-in
+var Buffer = require('buffer').Buffer
+var LZ4 = require('lz4')
 
-	// Some data to be compressed
-	var data = 'Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.'
-	data += data
-	// LZ4 can only work on Buffers
-	var input = new Buffer(data)
-	// Initialize the output buffer to its maximum length based on the input data
-	var output = new Buffer( LZ4.encodeBound(input.length) )
+// Some data to be compressed
+var data = 'Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.'
+data += data
+// LZ4 can only work on Buffers
+var input = new Buffer(data)
+// Initialize the output buffer to its maximum length based on the input data
+var output = new Buffer( LZ4.encodeBound(input.length) )
 
-	// block compression (no archive format)
-	var compressedSize = LZ4.encodeBlock(input, output)
-	// remove unnecessary bytes
-	output = output.slice(0, compressedSize)
+// block compression (no archive format)
+var compressedSize = LZ4.encodeBlock(input, output)
+// remove unnecessary bytes
+output = output.slice(0, compressedSize)
 
-	console.log( "compressed data", output.slice(0, compressedSize) )
+console.log( "compressed data", output.slice(0, compressedSize) )
 
-	// block decompression (no archive format)
-	var uncompressed = new Buffer(input.length)
-	var uncompressedSize = LZ4.decodeBlock(output, uncompressed)
-	uncompressed = uncompressed.slice(0, uncompressedSize)
+// block decompression (no archive format)
+var uncompressed = new Buffer(input.length)
+var uncompressedSize = LZ4.decodeBlock(output, uncompressed)
+uncompressed = uncompressed.slice(0, uncompressedSize)
 
-	console.log( "uncompressed data", uncompressed )
-	</script>
+console.log( "uncompressed data", uncompressed )
+</script>
+```
 
 
 From github cloning, after having made sure that node and node-gyp are properly installed:
 
-	npm i
-	node-gyp rebuild
+```shell
+npm i
+node-gyp rebuild
+```
 
 See below for more LZ4 functions.
 
@@ -100,7 +108,6 @@ var input = fs.createReadStream('test')
 var output = fs.createWriteStream('test.lz4')
 
 input.pipe(encoder).pipe(output)
-
 ```
 
 #### Synchronous encoding
@@ -127,7 +134,6 @@ var input = fs.readFileSync('test')
 var output = lz4.encode(input)
 
 fs.writeFileSync('test.lz4', output)
-
 ```
 
 
@@ -159,7 +165,6 @@ var input = fs.createReadStream('test.lz4')
 var output = fs.createWriteStream('test')
 
 input.pipe(decoder).pipe(output)
-
 ```
 
 #### Synchronous decoding
@@ -177,7 +182,6 @@ var input = fs.readFileSync('test.lz4')
 var output = lz4.decode(input)
 
 fs.writeFileSync('test', output)
-
 ```
 
 ## Block level encoding/decoding
