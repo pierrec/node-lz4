@@ -17,6 +17,16 @@ describe('LZ4 encoder', function () {
   }
 
   describe('sync', function () {
+    describe('empty', function () {
+      it('should encode no data', function (done) {
+        var empty = new Buffer("")
+        var encoded = lz4.encode(empty)
+
+        assert( compare(lz4.decode(encoded), empty) )
+        done()
+      })
+    })
+
     describe('encoding', function () {
       it('should encode data', function (done) {
         var encoded = lz4.encode(decoded_data)

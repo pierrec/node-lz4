@@ -863,6 +863,11 @@ Encoder.prototype._transform = function (data, encoding, done) {
 }
 
 Encoder.prototype._flush = function (done) {
+	if (this.first) {
+		this.push( this.header() )
+		this.first = false
+	}
+
 	if (this.length > 0) {
 		var buf = Buffer.concat(this.buffer, this.length)
 		this.buffer = []

@@ -1,3 +1,8 @@
+0.5.3 / 2016-09-01
+==================
+
+* Issue #44: Fix compressing a zero-sized stream. Thanks @ChALkeR.
+
 0.5.2 / 2016-03-21
 ==================
 
