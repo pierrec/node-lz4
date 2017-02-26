@@ -46,7 +46,7 @@ var compressedSize = LZ4.encodeBlock(input, output)
 // remove unnecessary bytes
 output = output.slice(0, compressedSize)
 
-console.log( "compressed data", output.slice(0, compressedSize) )
+console.log( "compressed data", output )
 
 // block decompression (no archive format)
 var uncompressed = new Buffer(input.length)
