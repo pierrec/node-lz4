@@ -17,9 +17,7 @@
     "url": "git://github.com/pierrec/node-lz4.git"
   },
   "main": "./lib/lz4.js",
-  "browser": {
-    "./lib/utils.js": "./lib/utils-js.js"
-  },
+  "browser": ".build/lz4.js",
   "bugs": {
     "url": "http://github.com/pierrec/node-lz4/issues"
   },
