@@ -5,6 +5,7 @@
 #include <node_buffer.h>
 #include <nan.h>
 
+#define XXH_PRIVATE_API
 #include "../../deps/lz4/lib/xxhash.h"
 
 using namespace node;
