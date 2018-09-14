@@ -14,7 +14,7 @@
   "homepage": "http://github.com/pierrec/node-lz4",
   "repository": {
     "type": "git",
-    "url": "git://github.com/pierrec/node-lz4.git"
+    "url": "https://github.com/zeroshade/node-lz4.git"
   },
   "main": "./lib/lz4.js",
   "browser": "./build/lz4.js",
@@ -34,14 +34,16 @@
   "binary": {
     "module_name": "lz4",
     "module_path": "./lib/binding/",
-    "host": "https://github.com/zeroshade/node-lz4/releases/download",
+    "host": "https://github.com/zeroshade/node-lz4/releases/download/",
     "remote_path": "{version}"
   },
   "dependencies": {
+    "@octokit/rest": "^15.12.1",
     "cuint": "^0.2.0",
     "nan": "^2.0.9",
     "node-pre-gyp": "^0.11.0",
-    "prebuild": "^8.0.1",
+    "node-pre-gyp-github": "^1.4.2",
+    "prebuild": "^8.1.0",
     "xxhashjs": "^0.1.1"
   },
   "devDependencies": {
@@ -60,6 +62,6 @@
   "scripts": {
     "test": "mocha",
     "install": "node-pre-gyp install --fallback-to-build",
-    "prepublish": "./build.sh"
+    "package": "node-pre-gyp build && node-pre-gyp package"
   }
 }
