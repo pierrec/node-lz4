@@ -5,6 +5,7 @@
 #include <node_buffer.h>
 #include <nan.h>
 
+#include "xxhash_binding.h"
 #include "../../deps/lz4/lib/lz4.h"
 #include "../../deps/lz4/lib/lz4hc.h"
 
@@ -382,6 +383,11 @@ NAN_MODULE_INIT(init_lz4) {
 
   Nan::Export(target, "uncompress", LZ4Uncompress);
   Nan::Export(target, "uncompress_fast", LZ4Uncompress_fast);
+
+  Nan::Export(target, "xxHash", xxHash);
+  Nan::Export(target, "init", xxHash_init);
+  Nan::Export(target, "update", xxHash_update);
+  Nan::Export(target, "digest", xxHash_digest);
 }
 
 NODE_MODULE(lz4, init_lz4)

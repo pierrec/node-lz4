@@ -25,8 +25,8 @@ exports.streamChecksum = function (d, c) {
 	return c.update(d)
 }
 
-// Provide simple readInt32LE as the Buffer ones from node and browserify are incompatible
-exports.readInt32LE = function (buffer, offset) {
+// Provide simple readUInt32LE as the Buffer ones from node and browserify are incompatible
+exports.readUInt32LE = function (buffer, offset) {
 	return (buffer[offset]) |
       (buffer[offset + 1] << 8) |
       (buffer[offset + 2] << 16) |
@@ -284,7 +284,7 @@ function compressBlock (src, dst, pos, hashTable, sIdx, eIdx) {
 	return dpos
 }
 
-},{"cuint":4}],2:[function(require,module,exports){
+},{"cuint":5}],2:[function(require,module,exports){
 
 },{}],3:[function(require,module,exports){
 var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -413,9 +413,16 @@ var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 }(typeof exports === 'undefined' ? (this.base64js = {}) : exports))
 
 },{}],4:[function(require,module,exports){
+var toString = {}.toString;
+
+module.exports = Array.isArray || function (arr) {
+  return toString.call(arr) == '[object Array]';
+};
+
+},{}],5:[function(require,module,exports){
 exports.UINT32 = require('./lib/uint32')
 exports.UINT64 = require('./lib/uint64')
-},{"./lib/uint32":5,"./lib/uint64":6}],5:[function(require,module,exports){
+},{"./lib/uint32":6,"./lib/uint64":7}],6:[function(require,module,exports){
 /**
 	C-like unsigned 32 bits integers in Javascript
 	Copyright (C) 2013, Pierre Curto
@@ -868,7 +875,7 @@ exports.UINT64 = require('./lib/uint64')
 
 })(this)
 
-},{}],6:[function(require,module,exports){
+},{}],7:[function(require,module,exports){
 /**
 	C-like unsigned 64 bits integers in Javascript
 	Copyright (C) 2013, Pierre Curto
@@ -1518,7 +1525,7 @@ exports.UINT64 = require('./lib/uint64')
 
 })(this)
 
-},{}],7:[function(require,module,exports){
+},{}],8:[function(require,module,exports){
 exports.read = function (buffer, offset, isLE, mLen, nBytes) {
   var e, m
   var eLen = (nBytes * 8) - mLen - 1
@@ -1604,20 +1611,13 @@ exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
   buffer[offset + i - d] |= s * 128
 }
 
-},{}],8:[function(require,module,exports){
-var toString = {}.toString;
-
-module.exports = Array.isArray || function (arr) {
-  return toString.call(arr) == '[object Array]';
-};
-
 },{}],9:[function(require,module,exports){
-arguments[4][4][0].apply(exports,arguments)
-},{"./lib/uint32":10,"./lib/uint64":11,"dup":4}],10:[function(require,module,exports){
 arguments[4][5][0].apply(exports,arguments)
-},{"dup":5}],11:[function(require,module,exports){
+},{"./lib/uint32":10,"./lib/uint64":11,"dup":5}],10:[function(require,module,exports){
 arguments[4][6][0].apply(exports,arguments)
-},{"dup":6}],12:[function(require,module,exports){
+},{"dup":6}],11:[function(require,module,exports){
+arguments[4][7][0].apply(exports,arguments)
+},{"dup":7}],12:[function(require,module,exports){
 (function (Buffer){
 /**
 	xxHash implementation in pure Javascript
@@ -3579,4 +3579,4 @@ function blitBuffer (src, dst, offset, length) {
 }
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"base64-js":3,"ieee754":7,"isarray":8}]},{},[2]);
+},{"base64-js":3,"ieee754":8,"isarray":4}]},{},[2]);

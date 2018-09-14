@@ -1,9 +1,10 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include <node.h>
+#include "xxhash_binding.h"
+//#include <node.h>
 #include <node_buffer.h>
-#include <nan.h>
+//#include <nan.h>
 
 #define XXH_PRIVATE_API
 #include "../../deps/lz4/lib/xxhash.h"
@@ -108,11 +109,11 @@ NAN_METHOD(xxHash_digest) {
   info.GetReturnValue().Set(res);
 }
 
-NAN_MODULE_INIT(init_xxhash) {
-  Nan::Export(target, "xxHash", xxHash);
-  Nan::Export(target, "init", xxHash_init);
-  Nan::Export(target, "update", xxHash_update);
-  Nan::Export(target, "digest", xxHash_digest);
-}
+// NAN_MODULE_INIT(init_xxhash) {
+//   Nan::Export(target, "xxHash", xxHash);
+//   Nan::Export(target, "init", xxHash_init);
+//   Nan::Export(target, "update", xxHash_update);
+//   Nan::Export(target, "digest", xxHash_digest);
+// }
 
-NODE_MODULE(xxhash, init_xxhash)
+// NODE_MODULE(xxhash, init_xxhash)
