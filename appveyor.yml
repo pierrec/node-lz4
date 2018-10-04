@@ -47,11 +47,10 @@ deploy:
   release: ${package_version}
   provider: GitHub
   auth_token:
-    secure: aJwAbajByhTfjiB0a3NzwZwWqp5jOJqFaSGelxe7TqgROz+L/QOtmjZj4FtUd029
+    secure: ENCRYPTED_TOKEN
   artifact: /.*\.tar\.gz/
   force_update: true
   prerelease: true
-  repository: zeroshade/node-lz4
   on:
     branch: master
 

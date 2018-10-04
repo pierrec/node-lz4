@@ -14,7 +14,7 @@
   "homepage": "http://github.com/pierrec/node-lz4",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zeroshade/node-lz4.git"
+    "url": "https://github.com/pierrec/node-lz4.git"
   },
   "main": "./lib/lz4.js",
   "browser": "./build/lz4.js",
@@ -34,7 +34,7 @@
   "binary": {
     "module_name": "lz4",
     "module_path": "./lib/binding/",
-    "host": "https://github.com/zeroshade/node-lz4/releases/download/",
+    "host": "https://github.com/pierrec/node-lz4/releases/download/",
     "remote_path": "{version}"
   },
   "dependencies": {
