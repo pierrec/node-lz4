@@ -49,7 +49,7 @@ NAN_METHOD(LZ4Compress) {
     }
     sIdx = info[2]->Uint32Value();
     eIdx = info[3]->Uint32Value();
-    result = Nan::New<Integer>(LZ4_compress_limitedOutput(Buffer::Data(input),
+    result = Nan::New<Integer>(LZ4_compress_default(Buffer::Data(input),
                                                         Buffer::Data(output) + sIdx,
                                                         Buffer::Length(input),
                                                         eIdx - sIdx)
@@ -62,9 +62,10 @@ NAN_METHOD(LZ4Compress) {
     }
     sIdx = info[2]->Uint32Value();
   case 2:
-    result = Nan::New<Integer>(LZ4_compress(Buffer::Data(input),
-                                          Buffer::Data(output) + sIdx,
-                                          Buffer::Length(input))
+    result = Nan::New<Integer>(LZ4_compress_default(Buffer::Data(input),
+                                                    Buffer::Data(output) + sIdx,
+                                                    Buffer::Length(input),
+                                                    eIdx - sIdx)
                             );
   }
 
@@ -88,9 +89,10 @@ NAN_METHOD(LZ4CompressHC) {
   Local<Object> input = info[0]->ToObject();
   Local<Object> output = info[1]->ToObject();
 
-  Local<Integer> result = Nan::New<Integer>(LZ4_compressHC(Buffer::Data(input),
+  Local<Integer> result = Nan::New<Integer>(LZ4_compress_HC(Buffer::Data(input),
                                                          Buffer::Data(output),
-                                                         Buffer::Length(input))
+                                                            Buffer::Length(input),
+                                                            LZ4_compressBound(Buffer::Length(input)), 0)
                                          );
   info.GetReturnValue().Set(result);
 }
@@ -141,10 +143,10 @@ NAN_METHOD(LZ4CompressLimited) {
   Local<Object> output = info[1]->ToObject();
   uint32_t size = info[2]->Uint32Value();
 
-  Local<Integer> result = Nan::New<Integer>(LZ4_compress_limitedOutput(Buffer::Data(input),
-                                                                     Buffer::Data(output),
-                                                                     Buffer::Length(input),
-                                                                     size)
+  Local<Integer> result = Nan::New<Integer>(LZ4_compress_default(Buffer::Data(input),
+                                                                 Buffer::Data(output),
+                                                                 Buffer::Length(input),
+                                                                 size)
                                          );
   info.GetReturnValue().Set(result);
 }
@@ -172,10 +174,10 @@ NAN_METHOD(LZ4CompressHCLimited) {
   Local<Object> output = info[1]->ToObject();
   uint32_t size = info[2]->Uint32Value();
 
-  Local<Integer> result = Nan::New<Integer>(LZ4_compressHC_limitedOutput(Buffer::Data(input),
-                                                                       Buffer::Data(output),
-                                                                       Buffer::Length(input),
-                                                                       size)
+  Local<Integer> result = Nan::New<Integer>(LZ4_compress_HC(Buffer::Data(input),
+                                                            Buffer::Data(output),
+                                                            Buffer::Length(input),
+                                                            size, 0)
                                          );
   info.GetReturnValue().Set(result);
 }

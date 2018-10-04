@@ -1,7 +1,4 @@
 environment:
-  NODE_PRE_GYP_GITHUB_TOKEN:
-    secure: aJwAbajByhTfjiB0a3NzwZwWqp5jOJqFaSGelxe7TqgROz+L/QOtmjZj4FtUd029
-
   matrix:
     - nodejs_version: "8"
     - nodejs_version: "10"
@@ -23,18 +20,8 @@ install:
       npm config set spin false
   - ps: >-
       $env:JOBS = "max";
-      $env:PUBLISH = "false";
       $env:GIT_TAG = "$(git describe --tags --always HEAD)";
       $env:package_version = (Get-Content -Raw -Path package.json | ConvertFrom-Json).version;
-      if ($env:APPVEYOR_REPO_BRANCH -match $env:GIT_TAG) {
-        $env:PUBLISH = "true";
-      }
-      if ($env:APPVEYOR_REPO_COMMIT_MESSAGE -match "[draft]") {
-        $env:PUBLISH = "true";
-      }
-      if ($env:APPVEYOR_REPO_TAG -match "true") {
-        $env:PUBLISH = "true";
-      }
       true;
   - ps: >-
       @{
@@ -42,7 +29,6 @@ install:
         "APPVEYOR_REPO_TAG" = $env:APPVEYOR_REPO_TAG
         "APPVEYOR_REPO_COMMIT_MESSAGE" = $env:APPVEYOR_REPO_COMMIT_MESSAGE
         "LATEST TAG" = $env:GIT_TAG
-        "PUBLISHING" = $env:PUBLISH
         "PACKAGE_VERSION" = $env:package_version
       } | Out-String | Write-Host;
   - ps: Update-AppveyorBuild -Version "$env:package_version-$env:APPVEYOR_BUILD_NUMBER"
@@ -66,9 +52,8 @@ deploy:
     secure: aJwAbajByhTfjiB0a3NzwZwWqp5jOJqFaSGelxe7TqgROz+L/QOtmjZj4FtUd029
   artifact: /.*\.tar\.gz/
   force_update: true
-  draft: true
   prerelease: true
   repository: zeroshade/node-lz4
   on:
-    branch: package
+    branch: master
 
