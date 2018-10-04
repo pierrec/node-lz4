@@ -35,8 +35,6 @@ install:
 
 build_script:
   - npm install --build-from-source
-  - ps: .\node_modules\.bin\browserify -o build/lz4.js -r ./lib/utils-js.js:./utils -r buffer -r ./lib/lz4.js:lz4 lib/lz4.js;
-  - ps: .\node_modules\.bin\minify build/lz4.js > build/lz4.min.js;
 
 test_script:
   - npm test
