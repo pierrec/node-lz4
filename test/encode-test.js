@@ -44,6 +44,24 @@ describe('LZ4 encoder', function () {
         done()
       })
     })
+
+    // https://github.com/pierrec/node-lz4/issues/69
+    describe('HC block compression', function () {
+      it('decoded should match with original', function (done) {
+        var str = 'a'.repeat(81) + 'XXXXXX' + 'a'.repeat(65531) + 'XXXXXXaaaaaa'
+        var input = new Buffer(str)
+        var output = new Buffer(lz4.encodeBound(input.length))
+        var compressedSize = lz4.encodeBlockHC(input, output)
+        output = output.slice(0, compressedSize)
+
+        var uncompressed = new Buffer(input.length)
+        var uncompressedSize = lz4.decodeBlock(output, uncompressed)
+        uncompressed = uncompressed.slice(0, uncompressedSize)
+
+        assert( compare(input, uncompressed) )
+        done()
+      })
+    })
   })
 
   describe('async', function () {
