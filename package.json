@@ -14,7 +14,7 @@
   "homepage": "http://github.com/pierrec/node-lz4",
   "repository": {
     "type": "git",
-    "url": "git://github.com/pierrec/node-lz4.git"
+    "url": "https://github.com/pierrec/node-lz4.git"
   },
   "main": "./lib/lz4.js",
   "browser": "./build/lz4.js",
@@ -31,27 +31,37 @@
   "engines": {
     "node": ">= 0.10"
   },
+  "binary": {
+    "module_name": "lz4",
+    "module_path": "./lib/binding/",
+    "host": "https://github.com/pierrec/node-lz4/releases/download/",
+    "remote_path": "{version}"
+  },
   "dependencies": {
+    "@octokit/rest": "^15.12.1",
     "cuint": "^0.2.0",
     "nan": "^2.0.9",
+    "node-pre-gyp": "^0.11.0",
+    "prebuild": "^8.1.0",
     "xxhashjs": "^0.1.1"
   },
   "devDependencies": {
     "benchmark": "^1.0.0",
     "browserify": "^9.0.7",
     "jasmine-core": "^2.2.0",
-    "karma": "^0.12.31",
+    "karma": "^3.0.0",
     "karma-chrome-launcher": "^0.1.7",
     "karma-cli": "0.0.4",
     "karma-firefox-launcher": "^0.1.4",
     "karma-jasmine": "^0.3.5",
     "karma-mocha": "^0.1.10",
-    "minify": "^1.4.10",
-    "mocha": "^2.2.4"
+    "minify": "^3.0.5",
+    "mocha": "^5.2.0"
   },
   "scripts": {
     "test": "mocha",
-    "install": "node-gyp rebuild",
-    "prepublish": "./build.sh"
+    "install": "node-pre-gyp install --fallback-to-build",
+    "postinstall": "browserify -o build/lz4.js -r ./lib/utils-js.js:./utils -r buffer -r ./lib/lz4.js:lz4 lib/lz4.js && minify build/lz4.js > build/lz4.min.js",
+    "package": "node-pre-gyp configure && node-pre-gyp build && node-pre-gyp package"
   }
 }

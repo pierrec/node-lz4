@@ -1,0 +1,56 @@
+environment:
+  matrix:
+    - nodejs_version: "8"
+    - nodejs_version: "10"
+
+os: Visual Studio 2017
+
+platform:
+  - x64
+  - x86
+
+matrix:
+  fast_finish: true
+
+install:
+  - cmd: git submodule update --init --recursive
+  - ps: Update-NodeJsInstallation (Get-NodeJsLatestBuild $env:nodejs_version) $env:platform;
+  - ps: >-
+      npm config set progress false
+      npm config set spin false
+  - ps: >-
+      $env:JOBS = "max";
+      $env:GIT_TAG = "$(git describe --tags --always HEAD)";
+      $env:package_version = (Get-Content -Raw -Path package.json | ConvertFrom-Json).version;
+      true;
+  - ps: >-
+      @{
+        "APPVEYOR_REPO_BRANCH" = $env:APPVEYOR_REPO_BRANCH
+        "APPVEYOR_REPO_TAG" = $env:APPVEYOR_REPO_TAG
+        "APPVEYOR_REPO_COMMIT_MESSAGE" = $env:APPVEYOR_REPO_COMMIT_MESSAGE
+        "LATEST TAG" = $env:GIT_TAG
+        "PACKAGE_VERSION" = $env:package_version
+      } | Out-String | Write-Host;
+  - ps: Update-AppveyorBuild -Version "$env:package_version-$env:APPVEYOR_BUILD_NUMBER"
+
+build_script:
+  - npm install --build-from-source
+
+test_script:
+  - npm test
+
+after_build:
+  - npm run package
+  - ps: Get-ChildItem .\build\stage\*\* | %{ Push-AppveyorArtifact $_.FullName -FileName $_.Name }
+
+deploy:
+  release: ${package_version}
+  provider: GitHub
+  auth_token:
+    secure: ENCRYPTED_TOKEN
+  artifact: /.*\.tar\.gz/
+  force_update: true
+  prerelease: true
+  on:
+    branch: master
+
