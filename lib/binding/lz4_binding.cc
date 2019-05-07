@@ -30,8 +30,8 @@ NAN_METHOD(LZ4Compress) {
     Nan::ThrowTypeError("Wrong arguments");
     return;
   }
-  Local<Object> input = info[0]->ToObject();
-  Local<Object> output = info[1]->ToObject();
+  Local<Object> input = Local<Object>::Cast(info[0]);
+  Local<Object> output = Local<Object>::Cast(info[1]);
 
   Local<Integer> result;
   uint32_t sIdx = 0;
@@ -46,8 +46,8 @@ NAN_METHOD(LZ4Compress) {
       Nan::ThrowTypeError("Invalid startIdx");
       return;
     }
-    sIdx = info[2]->Uint32Value();
-    eIdx = info[3]->Uint32Value();
+    sIdx = info[2]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
+    eIdx = info[3]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
     result = Nan::New<Integer>(LZ4_compress_limitedOutput(Buffer::Data(input),
                                                         Buffer::Data(output) + sIdx,
                                                         Buffer::Length(input),
@@ -59,7 +59,7 @@ NAN_METHOD(LZ4Compress) {
       Nan::ThrowTypeError("Invalid startIdx");
       return;
     }
-    sIdx = info[2]->Uint32Value();
+    sIdx = info[2]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
   case 2:
     result = Nan::New<Integer>(LZ4_compress(Buffer::Data(input),
                                           Buffer::Data(output) + sIdx,
@@ -84,8 +84,8 @@ NAN_METHOD(LZ4CompressHC) {
     return;
   }
 
-  Local<Object> input = info[0]->ToObject();
-  Local<Object> output = info[1]->ToObject();
+  Local<Object> input = Local<Object>::Cast(info[0]);
+  Local<Object> output = Local<Object>::Cast(info[1]);
 
   Local<Integer> result = Nan::New<Integer>(LZ4_compressHC(Buffer::Data(input),
                                                          Buffer::Data(output),
@@ -110,7 +110,7 @@ NAN_METHOD(LZ4CompressBound) {
     return;
   }
 
-  uint32_t size = info[0]->Uint32Value();
+  uint32_t size = info[0]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
 
   info.GetReturnValue().Set(
     Nan::New<Integer>(LZ4_compressBound(size))
@@ -136,9 +136,9 @@ NAN_METHOD(LZ4CompressLimited) {
     return;
   }
 
-  Local<Object> input = info[0]->ToObject();
-  Local<Object> output = info[1]->ToObject();
-  uint32_t size = info[2]->Uint32Value();
+  Local<Object> input = Local<Object>::Cast(info[0]);
+  Local<Object> output = Local<Object>::Cast(info[1]);
+  uint32_t size = info[2]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
 
   Local<Integer> result = Nan::New<Integer>(LZ4_compress_limitedOutput(Buffer::Data(input),
                                                                      Buffer::Data(output),
@@ -167,9 +167,9 @@ NAN_METHOD(LZ4CompressHCLimited) {
     return;
   }
 
-  Local<Object> input = info[0]->ToObject();
-  Local<Object> output = info[1]->ToObject();
-  uint32_t size = info[2]->Uint32Value();
+  Local<Object> input = Local<Object>::Cast(info[0]);
+  Local<Object> output = Local<Object>::Cast(info[1]);
+  uint32_t size = info[2]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
 
   Local<Integer> result = Nan::New<Integer>(LZ4_compressHC_limitedOutput(Buffer::Data(input),
                                                                        Buffer::Data(output),
@@ -200,7 +200,7 @@ NAN_METHOD(LZ4Stream_create) {
     return;
   }
 
-  Local<Object> input = info[0]->ToObject();
+  Local<Object> input = Local<Object>::Cast(info[0]);
 
   void* p = LZ4_create( Buffer::Data(input) );
 
@@ -227,9 +227,9 @@ NAN_METHOD(LZ4Stream_compress_continue) {
     return;
   }
 
-  Local<Object> lz4ds = info[0]->ToObject();
-  Local<Object> input = info[1]->ToObject();
-  Local<Object> output = info[2]->ToObject();
+  Local<Object> lz4ds = Local<Object>::Cast(info[0]);
+  Local<Object> input = Local<Object>::Cast(info[1]);
+  Local<Object> output = Local<Object>::Cast(info[2]);
 
   Local<Integer> result = Nan::New<Integer>(LZ4_compress_continue(
                                             (LZ4_stream_t*)Buffer::Data(lz4ds),
@@ -254,8 +254,8 @@ NAN_METHOD(LZ4Stream_slideInputBuffer) {
     return;
   }
 
-  Local<Object> lz4ds = info[0]->ToObject();
-  Local<Object> input = info[1]->ToObject();
+  Local<Object> lz4ds = Local<Object>::Cast(info[0]);
+  Local<Object> input = Local<Object>::Cast(info[1]);
 
   // Pointer to the position into the input buffer where the next data block should go
   char* input_next_block = LZ4_slideInputBuffer(Buffer::Data(lz4ds));
@@ -279,7 +279,7 @@ NAN_METHOD(LZ4Stream_free) {
     return;
   }
 
-  Local<Object> lz4ds = info[0]->ToObject();
+  Local<Object> lz4ds = Local<Object>::Cast(info[0]);
   int res = LZ4_freeStream( (LZ4_stream_t*) Buffer::Data(lz4ds) );
 
   info.GetReturnValue().Set(Nan::New<Integer>(res));
@@ -302,8 +302,8 @@ NAN_METHOD(LZ4Uncompress) {
     Nan::ThrowTypeError("Wrong arguments");
     return;
   }
-  Local<Object> input = info[0]->ToObject();
-  Local<Object> output = info[1]->ToObject();
+  Local<Object> input = Local<Object>::Cast(info[0]);
+  Local<Object> output = Local<Object>::Cast(info[1]);
 
   Local<Integer> result;
   uint32_t sIdx = 0;
@@ -318,8 +318,8 @@ NAN_METHOD(LZ4Uncompress) {
       Nan::ThrowTypeError("Invalid startIdx");
       return;
     }
-    sIdx = info[2]->Uint32Value();
-    eIdx = info[3]->Uint32Value();
+    sIdx = info[2]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
+    eIdx = info[3]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
     result = Nan::New<Integer>(LZ4_decompress_safe(Buffer::Data(input) + sIdx,
                                                  Buffer::Data(output),
                                                  eIdx - sIdx,
@@ -331,7 +331,7 @@ NAN_METHOD(LZ4Uncompress) {
       Nan::ThrowTypeError("Invalid startIdx");
       return;
     }
-    sIdx = info[2]->Uint32Value();
+    sIdx = info[2]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
   case 2:
     result = Nan::New<Integer>(LZ4_decompress_safe(Buffer::Data(input) + sIdx,
                                                  Buffer::Data(output),
@@ -357,8 +357,8 @@ NAN_METHOD(LZ4Uncompress_fast) {
     return;
   }
 
-  Local<Object> input = info[0]->ToObject();
-  Local<Object> output = info[1]->ToObject();
+  Local<Object> input = Local<Object>::Cast(info[0]);
+  Local<Object> output = Local<Object>::Cast(info[1]);
 
   Local<Integer> result = Nan::New<Integer>(LZ4_decompress_fast(Buffer::Data(input),
                                                               Buffer::Data(output),
