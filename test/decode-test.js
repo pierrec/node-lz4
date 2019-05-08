@@ -1,18 +1,17 @@
 var fs = require('fs')
 var assert = require('assert')
-
 var lz4 = require('..')
 
 describe('LZ4 decoder', function () {
-  var decoded_data = fs.readFileSync( __dirname + '/../data/test' ).toString()
-  var decoded_data_medium = fs.readFileSync( __dirname + '/../data/test_medium' ).toString()
+  var decoded_data = fs.readFileSync( __dirname + '/../data/test' ).toString().replace(/\r/g, '') // cleanup line endings
+  var decoded_data_medium = fs.readFileSync( __dirname + '/../data/test_medium' ).toString().replace(/\r/g, '') // cleanup line endings
   var encoded_data = fs.readFileSync( __dirname + '/../data/test.lz4' )
 
   describe('sync', function () {
     it('should decode data', function (done) {
       var decoded = lz4.decode(encoded_data)
 
-      assert( decoded_data === decoded.toString() )
+      assert.equal( decoded_data, decoded.toString() )
       done()
     })
   })
@@ -29,7 +28,7 @@ describe('LZ4 decoder', function () {
       decoder.on('data', add)
       decoder.on('end', add)
       decoder.on('end', function () {
-      	assert( decoded_data === decoded )
+      	assert.equal( decoded_data, decoded )
       	done()
       })
 
@@ -47,7 +46,7 @@ describe('LZ4 decoder', function () {
       decoder.on('data', add)
       decoder.on('end', add)
       decoder.on('end', function () {
-        assert( decoded_data_medium === decoded )
+        assert.equal( decoded_data_medium, decoded )
         done()
       })
 
