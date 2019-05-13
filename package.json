@@ -32,13 +32,14 @@
     "node": ">= 0.10"
   },
   "dependencies": {
-    "cuint": "^0.2.0",
-    "nan": "^2.1.0",
-    "xxhashjs": "^0.1.1"
+    "buffer": "^5.2.1",
+    "cuint": "^0.2.2",
+    "nan": "^2.13.2",
+    "xxhashjs": "^0.2.2"
   },
   "devDependencies": {
     "benchmark": "^1.0.0",
-    "browserify": "^9.0.7",
+    "browserify": "^16.2.3",
     "jasmine-core": "^2.2.0",
     "karma": "^0.12.31",
     "karma-chrome-launcher": "^0.1.7",
@@ -46,7 +47,7 @@
     "karma-firefox-launcher": "^0.1.4",
     "karma-jasmine": "^0.3.5",
     "karma-mocha": "^0.1.10",
-    "minify": "^1.4.10",
+    "minify": "^4.1.1",
     "mocha": "^2.2.4"
   },
   "scripts": {

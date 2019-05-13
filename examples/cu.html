@@ -1,0 +1,38 @@
+<html>
+<head>
+<meta charset="utf-8"/>
+<script src="../build/lz4.js"></script>
+</head>
+<body>
+	
+<script type="text/javascript">
+
+  var lz4 = require('lz4')
+  var Buffer = require('buffer').Buffer
+
+  var data = 'Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.'
+  data += data
+
+  var buffer = lz4.buffer
+
+  var inp = new Buffer(data)
+
+
+  const enc = lz4.encode(inp)
+  console.log( "enc", enc.toString('hex' ))
+  var h = ''
+  for (var _i=0; _i<enc.length/2-1; _i++)
+    h += enc[2*_i+1].toString(16) +'-'+ enc[2*_i].toString(16) + ' '
+  console.log(h)
+  
+
+  var inp2 = new Buffer(enc)
+
+  const dec = lz4.decode(inp2)
+  console.log( "dec", dec.toString('hex' ) )
+  console.log( "dec", new TextDecoder("utf-8").decode(dec) )
+
+</script>
+
+</body>
+</html>
