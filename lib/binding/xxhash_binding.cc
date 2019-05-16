@@ -31,7 +31,7 @@ NAN_METHOD(xxHash) {
   Local<Object> input = Local<Object>::Cast(info[0]);
   uint32_t seed = 0;
   if (info[1]->IsUint32()) {
-    seed = info[1]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
+    seed = info[1]->Uint32Value(Nan::GetCurrentContext()).FromJust();
   }
 
   Local<Integer> result = Nan::New<Integer>(XXH32(Buffer::Data(input),
@@ -55,7 +55,7 @@ NAN_METHOD(xxHash_init) {
     return;
   }
 
-  uint32_t seed = info[0]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
+  uint32_t seed = info[0]->Uint32Value(Nan::GetCurrentContext()).FromJust();
 
   XXH32_state_t* state = XXH32_createState();
   XXH32_reset(state, seed);

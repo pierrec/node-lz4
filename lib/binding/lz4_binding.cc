@@ -42,14 +42,14 @@ NAN_METHOD(LZ4Compress) {
       Nan::ThrowTypeError("Invalid endIdx");
       return;
     }
-    eIdx = info[3]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
+    eIdx = info[3]->Uint32Value(Nan::GetCurrentContext()).FromJust();
     // fall through
   case 3:
     if (!info[2]->IsUint32()) {
       Nan::ThrowTypeError("Invalid startIdx");
       return;
     }
-    sIdx = info[2]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
+    sIdx = info[2]->Uint32Value(Nan::GetCurrentContext()).FromJust();
     // fall through
   case 2:
     result = Nan::New<Integer>(LZ4_compress_default(Buffer::Data(input),
@@ -79,7 +79,7 @@ NAN_METHOD(LZ4CompressHC) {
 
   Local<Object> input = Local<Object>::Cast(info[0]);
   Local<Object> output = Local<Object>::Cast(info[1]);
-  uint32_t compressionLevel = info[3]->IsUint32() ? info[3]->Uint32Value(Nan::GetCurrentContext()).ToChecked() : 9;
+  uint32_t compressionLevel = info[3]->IsUint32() ? info[3]->Uint32Value(Nan::GetCurrentContext()).FromJust() : 9;
 
   Local<Integer> result = Nan::New<Integer>(LZ4_compress_HC(Buffer::Data(input),
                                                          Buffer::Data(output),
@@ -106,7 +106,7 @@ NAN_METHOD(LZ4CompressBound) {
     return;
   }
 
-  uint32_t size = info[0]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
+  uint32_t size = info[0]->Uint32Value(Nan::GetCurrentContext()).FromJust();
 
   info.GetReturnValue().Set(
     Nan::New<Integer>(LZ4_compressBound(size))
@@ -134,7 +134,7 @@ NAN_METHOD(LZ4CompressLimited) {
 
   Local<Object> input = Local<Object>::Cast(info[0]);
   Local<Object> output = Local<Object>::Cast(info[1]);
-  uint32_t size = info[2]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
+  uint32_t size = info[2]->Uint32Value(Nan::GetCurrentContext()).FromJust();
 
   Local<Integer> result = Nan::New<Integer>(LZ4_compress_default(Buffer::Data(input),
                                                                      Buffer::Data(output),
@@ -166,8 +166,8 @@ NAN_METHOD(LZ4CompressHCLimited) {
 
   Local<Object> input = Local<Object>::Cast(info[0]);
   Local<Object> output = Local<Object>::Cast(info[1]);
-  uint32_t size = info[2]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
-  uint32_t compressionLevel = info[3]->IsUint32() ? info[3]->Uint32Value(Nan::GetCurrentContext()).ToChecked() : 9;
+  uint32_t size = info[2]->Uint32Value(Nan::GetCurrentContext()).FromJust();
+  uint32_t compressionLevel = info[3]->IsUint32() ? info[3]->Uint32Value(Nan::GetCurrentContext()).FromJust() : 9;
 
   Local<Integer> result = Nan::New<Integer>(LZ4_compress_HC(Buffer::Data(input),
                                                                        Buffer::Data(output),
@@ -317,8 +317,8 @@ NAN_METHOD(LZ4Uncompress) {
       Nan::ThrowTypeError("Invalid startIdx");
       return;
     }
-    sIdx = info[2]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
-    eIdx = info[3]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
+    sIdx = info[2]->Uint32Value(Nan::GetCurrentContext()).FromJust();
+    eIdx = info[3]->Uint32Value(Nan::GetCurrentContext()).FromJust();
     result = Nan::New<Integer>(LZ4_decompress_safe(Buffer::Data(input) + sIdx,
                                                  Buffer::Data(output),
                                                  eIdx - sIdx,
@@ -330,7 +330,7 @@ NAN_METHOD(LZ4Uncompress) {
       Nan::ThrowTypeError("Invalid startIdx");
       return;
     }
-    sIdx = info[2]->Uint32Value(Nan::GetCurrentContext()).ToChecked();
+    sIdx = info[2]->Uint32Value(Nan::GetCurrentContext()).FromJust();
   case 2:
     result = Nan::New<Integer>(LZ4_decompress_safe(Buffer::Data(input) + sIdx,
                                                  Buffer::Data(output),
