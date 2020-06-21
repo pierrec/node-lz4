@@ -4,7 +4,7 @@ describe('Browser checksum', function () {
 
   it('should encode/decode test data', function () {
     runs(function () {
-      var data = new Buffer(200)
+      var data = Buffer.alloc(200)
       data.fill(0)
 
       lz4.decode(lz4.encode(data))
@@ -13,7 +13,7 @@ describe('Browser checksum', function () {
 
   it('should encode/decode test data', function () {
     runs(function () {
-      var data = new Buffer(200)
+      var data = Buffer.alloc(200)
       data.fill(16)
 
       lz4.decode(lz4.encode(data))
@@ -22,7 +22,7 @@ describe('Browser checksum', function () {
 
   it('should encode/decode test data', function () {
     runs(function () {
-      var data = new Buffer(200)
+      var data = Buffer.alloc(200)
       data.slice(0, 100).fill(0)
       data.slice(100).fill(16)
 

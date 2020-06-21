@@ -4,21 +4,21 @@ describe('Browser block encoding/decoding', function () {
 
   describe('block', function () {
     it('should encode short uncompressible string', function () {
-      lz4.encodeBlock(new Buffer('Test'), new Buffer(32))
+      lz4.encodeBlock(Buffer.from('Test'), Buffer.alloc(32))
     })
 
     it('should encode/decode test data', function () {
       var decoded_data_valid
 
       downloadDataFile('test', 'arraybuffer', function (response) {
-        decoded_data_valid = new Buffer(new Uint8Array(response))
+        decoded_data_valid = Buffer.from(new Uint8Array(response))
       })
 
       runs(function () {
         expect(decoded_data_valid).toBeDefined()
 
-        var encoded_data = new Buffer(lz4.encodeBound(decoded_data_valid.length))
-        var decoded_data = new Buffer(decoded_data_valid.length)
+        var encoded_data = Buffer.alloc(lz4.encodeBound(decoded_data_valid.length))
+        var decoded_data = Buffer.alloc(decoded_data_valid.length)
 
         expect(encoded_data).toBeDefined()
         expect(decoded_data).toBeDefined()
@@ -41,14 +41,14 @@ describe('Browser block encoding/decoding', function () {
       var decoded_data_valid
 
       downloadDataFile('test', 'arraybuffer', function (response) {
-        decoded_data_valid = new Buffer(new Uint8Array(response))
+        decoded_data_valid = Buffer.from(new Uint8Array(response))
       })
 
       runs(function () {
         expect(decoded_data_valid).toBeDefined()
 
-        var encoded_data = new Buffer(lz4.encodeBound(decoded_data_valid.length) + 4)
-        var decoded_data = new Buffer(decoded_data_valid.length)
+        var encoded_data = Buffer.alloc(lz4.encodeBound(decoded_data_valid.length) + 4)
+        var decoded_data = Buffer.alloc(decoded_data_valid.length)
 
         expect(encoded_data).toBeDefined()
         expect(decoded_data).toBeDefined()

@@ -37,9 +37,9 @@ var LZ4 = require('lz4')
 var data = 'Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.'
 data += data
 // LZ4 can only work on Buffers
-var input = new Buffer(data)
+var input = Buffer.from(data)
 // Initialize the output buffer to its maximum length based on the input data
-var output = new Buffer( LZ4.encodeBound(input.length) )
+var output = Buffer.alloc( LZ4.encodeBound(input.length) )
 
 // block compression (no archive format)
 var compressedSize = LZ4.encodeBlock(input, output)
@@ -49,7 +49,7 @@ output = output.slice(0, compressedSize)
 console.log( "compressed data", output )
 
 // block decompression (no archive format)
-var uncompressed = new Buffer(input.length)
+var uncompressed = Buffer.alloc(input.length)
 var uncompressedSize = LZ4.decodeBlock(output, uncompressed)
 uncompressed = uncompressed.slice(0, uncompressedSize)
 

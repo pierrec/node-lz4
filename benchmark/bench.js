@@ -9,10 +9,10 @@ console.log('Input file:', inputFileName)
 
 var input = fs.readFileSync(inputFileName)
 var outputMaxSize = lz4.encodeBound(input.length)
-var output = new Buffer(outputMaxSize)
+var output = Buffer.alloc(outputMaxSize)
 
-var decoded = new Buffer(input.length)
-var encoded = new Buffer(outputMaxSize)
+var decoded = Buffer.alloc(input.length)
+var encoded = Buffer.alloc(outputMaxSize)
 var n = lz4.encodeBlock(input, encoded)
 encoded = encoded.slice(0, n)
 

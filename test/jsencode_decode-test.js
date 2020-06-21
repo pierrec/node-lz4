@@ -22,13 +22,13 @@ describe('LZ4 js encoder', function () {
     var data = fs.readFileSync( __dirname + '/../data/test' )
     var maxSize = lz4.compressBound(data.length)
     
-    var jsencoded = new Buffer(maxSize)
+    var jsencoded = Buffer.alloc(maxSize)
     var jsencodedSize = lz4.compress(data, jsencoded)
 
     assert( jsencodedSize > 0 )
     jsencoded = jsencoded.slice(0, jsencodedSize)
 
-    var jsdecoded = new Buffer(data.length)
+    var jsdecoded = Buffer.alloc(data.length)
     var jsdecodedSize = lz4.uncompress(jsencoded, jsdecoded)
 
     assert( jsdecodedSize > 0 )
@@ -44,16 +44,16 @@ describe('LZ4 js encoder', function () {
 
   //TODO node v0.10.26 seg faults on this test
   false&&it('should encode/decode data #2', function (done) {
-    var data = new Buffer("R0lGODlhDAAMAIAAAGZmZv///yH5BAEAAAEALAAAAAAMAAwAAAIYjI8BmbBsHIwPSsXuPbrSj3QRKIrKYl4FADs=")
+    var data = Buffer.from("R0lGODlhDAAMAIAAAGZmZv///yH5BAEAAAEALAAAAAAMAAwAAAIYjI8BmbBsHIwPSsXuPbrSj3QRKIrKYl4FADs=")
     var maxSize = lz4.compressBound(data.length)
     
-    var jsencoded = new Buffer(maxSize)
+    var jsencoded = Buffer.alloc(maxSize)
     var jsencodedSize = lz4.compress(data, jsencoded)
 
     assert( jsencodedSize > 0 )
     jsencoded = jsencoded.slice(0, jsencodedSize)
 
-    var jsdecoded = new Buffer(data.length)
+    var jsdecoded = Buffer.alloc(data.length)
     var jsdecodedSize = lz4.uncompress(jsencoded, jsdecoded)
 
     assert( jsdecodedSize > 0 )

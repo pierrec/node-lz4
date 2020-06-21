@@ -12,7 +12,7 @@ var outputFile = process.argv[3] || path.basename(inputFile, lz4.extension)
 
 var input = fs.readFileSync( inputFile )
 // Allocate output size... randomly :s
-var output = new Buffer( input.length * 3 )
+var output = Buffer.alloc( input.length * 3 )
 
 console.log('Uncompressing %s to %s...', inputFile, outputFile)
 var startTime = Date.now()

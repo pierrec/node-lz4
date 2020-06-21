@@ -15,7 +15,7 @@ describe('Browser encoding', function () {
       })
 
       downloadDataFile('test.lz4', 'arraybuffer', function (response) {
-        encoded_data = new Buffer(new Uint8Array(response))
+        encoded_data = Buffer.from(new Uint8Array(response))
       })
 
       runs(function () {
