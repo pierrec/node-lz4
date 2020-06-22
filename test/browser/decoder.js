@@ -25,7 +25,7 @@ describe('Browser encoding', function () {
       })
 
       downloadDataFile('sphere.lz4.dat', 'arraybuffer', function (response) {
-        encoded_data = new Buffer(new Uint8Array(response))
+        encoded_data = Buffer.from(new Uint8Array(response))
       })
 
       runs(function () {

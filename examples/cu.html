@@ -15,7 +15,7 @@
 
   var buffer = lz4.buffer
 
-  var inp = new Buffer(data)
+  var inp = Buffer.from(data)
 
 
   const enc = lz4.encode(inp)
@@ -26,7 +26,7 @@
   console.log(h)
   
 
-  var inp2 = new Buffer(enc)
+  var inp2 = Buffer.from(enc)
 
   const dec = lz4.decode(inp2)
   console.log( "dec", dec.toString('hex' ) )

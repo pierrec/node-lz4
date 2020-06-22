@@ -12,7 +12,7 @@ var outputFile = process.argv[3] || inputFile + lz4.extension
 
 var input = fs.readFileSync( inputFile )
 // Allocate max block size, __to be sliced__ accordingly after compression
-var output = new Buffer( lz4.encodeBound(input.length) )
+var output = Buffer.alloc( lz4.encodeBound(input.length) )
 
 console.log('Compressing %s to %s...', inputFile, outputFile)
 var startTime = Date.now()

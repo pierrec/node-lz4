@@ -10,9 +10,9 @@
 			var Buffer = require('buffer').Buffer
 
 			var str = document.getElementById('input').value
-			var input = new Buffer(str)
+			var input = Buffer.from(str)
 			var maxOutputSize = LZ4.encodeBound(input.length)
-			var output = new Buffer(maxOutputSize)
+			var output = Buffer.alloc(maxOutputSize)
 
 			console.debug("maxOutputSize", maxOutputSize)
 			var startTime = Date.now()
