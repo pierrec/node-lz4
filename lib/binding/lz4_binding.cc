@@ -383,4 +383,8 @@ NAN_MODULE_INIT(init_lz4) {
   Nan::Export(target, "uncompress_fast", LZ4Uncompress_fast);
 }
 
-NODE_MODULE(lz4, init_lz4)
+#if (NODE_MAJOR_VERSION >= 10 && NODE_MINOR_VERSION >= 7) || NODE_MAJOR_VERSION >= 11
+  NAN_MODULE_WORKER_ENABLED(lz4, init_lz4)
+#else
+  NODE_MODULE(lz4, init_lz4)
+#endif

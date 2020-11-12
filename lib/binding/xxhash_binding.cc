@@ -115,4 +115,8 @@ NAN_MODULE_INIT(init_xxhash) {
   Nan::Export(target, "digest", xxHash_digest);
 }
 
-NODE_MODULE(xxhash, init_xxhash)
+#if (NODE_MAJOR_VERSION >= 10 && NODE_MINOR_VERSION >= 7) || NODE_MAJOR_VERSION >= 11
+  NAN_MODULE_WORKER_ENABLED(xxhash, init_xxhash)
+#else
+  NODE_MODULE(xxhash, init_xxhash)
+#endif
