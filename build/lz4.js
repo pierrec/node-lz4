@@ -37,7 +37,930 @@ exports.readUInt32LE = function (buffer, offset) {
 
 exports.bindings = require('./binding')
 
-},{"./binding":32,"xxhashjs":"xxhashjs"}],1:[function(require,module,exports){
+},{"./binding":1,"xxhashjs":"xxhashjs"}],1:[function(require,module,exports){
+/**
+	Javascript version of the key LZ4 C functions
+ */
+var uint32 = require('cuint').UINT32
+
+if (!Math.imul) Math.imul = function imul(a, b) {
+	var ah = a >>> 16;
+	var al = a & 0xffff;
+	var bh = b >>> 16;
+	var bl = b & 0xffff;
+	return (al*bl + ((ah*bl + al*bh) << 16))|0;
+};
+
+/**
+ * Decode a block. Assumptions: input contains all sequences of a 
+ * chunk, output is large enough to receive the decoded data.
+ * If the output buffer is too small, an error will be thrown.
+ * If the returned value is negative, an error occured at the returned offset.
+ *
+ * @param input {Buffer} input data
+ * @param output {Buffer} output data
+ * @return {Number} number of decoded bytes
+ * @private
+ */
+exports.uncompress = function (input, output, sIdx, eIdx) {
+	sIdx = sIdx || 0
+	eIdx = eIdx || (input.length - sIdx)
+	// Process each sequence in the incoming data
+	for (var i = sIdx, n = eIdx, j = 0; i < n;) {
+		var token = input[i++]
+
+		// Literals
+		var literals_length = (token >> 4)
+		if (literals_length > 0) {
+			// length of literals
+			var l = literals_length + 240
+			while (l === 255) {
+				l = input[i++]
+				literals_length += l
+			}
+
+			// Copy the literals
+			var end = i + literals_length
+			while (i < end) output[j++] = input[i++]
+
+			// End of buffer?
+			if (i === n) return j
+		}
+
+		// Match copy
+		// 2 bytes offset (little endian)
+		var offset = input[i++] | (input[i++] << 8)
+
+		// 0 is an invalid offset value
+		if (offset === 0 || offset > j) return -(i-2)
+
+		// length of match copy
+		var match_length = (token & 0xf)
+		var l = match_length + 240
+		while (l === 255) {
+			l = input[i++]
+			match_length += l
+		}
+
+		// Copy the match
+		var pos = j - offset // position of the match copy in the current output
+		var end = j + match_length + 4 // minmatch = 4
+		while (j < end) output[j++] = output[pos++]
+	}
+
+	return j
+}
+
+var
+	maxInputSize	= 0x7E000000
+,	minMatch		= 4
+// uint32() optimization
+,	hashLog			= 16
+,	hashShift		= (minMatch * 8) - hashLog
+,	hashSize		= 1 << hashLog
+
+,	copyLength		= 8
+,	lastLiterals	= 5
+,	mfLimit			= copyLength + minMatch
+,	skipStrength	= 6
+
+,	mlBits  		= 4
+,	mlMask  		= (1 << mlBits) - 1
+,	runBits 		= 8 - mlBits
+,	runMask 		= (1 << runBits) - 1
+
+,	hasher 			= 2654435761
+
+// CompressBound returns the maximum length of a lz4 block, given it's uncompressed length
+exports.compressBound = function (isize) {
+	return isize > maxInputSize
+		? 0
+		: (isize + (isize/255) + 16) | 0
+}
+
+exports.compress = function (src, dst, sIdx, eIdx) {
+	// V8 optimization: non sparse array with integers
+	var hashTable = new Array(hashSize)
+	for (var i = 0; i < hashSize; i++) {
+		hashTable[i] = 0
+	}
+	return compressBlock(src, dst, 0, hashTable, sIdx || 0, eIdx || dst.length)
+}
+
+exports.compressHC = exports.compress
+
+exports.compressDependent = compressBlock
+
+function compressBlock (src, dst, pos, hashTable, sIdx, eIdx) {
+	var dpos = sIdx
+	var dlen = eIdx - sIdx
+	var anchor = 0
+
+	if (src.length >= maxInputSize) throw new Error("input too large")
+
+	// Minimum of input bytes for compression (LZ4 specs)
+	if (src.length > mfLimit) {
+		var n = exports.compressBound(src.length)
+		if ( dlen < n ) throw Error("output too small: " + dlen + " < " + n)
+
+		var 
+			step  = 1
+		,	findMatchAttempts = (1 << skipStrength) + 3
+		// Keep last few bytes incompressible (LZ4 specs):
+		// last 5 bytes must be literals
+		,	srcLength = src.length - mfLimit
+
+		while (pos + minMatch < srcLength) {
+			// Find a match
+			// min match of 4 bytes aka sequence
+			var sequenceLowBits = src[pos+1]<<8 | src[pos]
+			var sequenceHighBits = src[pos+3]<<8 | src[pos+2]
+			// compute hash for the current sequence
+			var hash = Math.imul(sequenceLowBits | (sequenceHighBits << 16), hasher) >>> hashShift
+			// get the position of the sequence matching the hash
+			// NB. since 2 different sequences may have the same hash
+			// it is double-checked below
+			// do -1 to distinguish between initialized and uninitialized values
+			var ref = hashTable[hash] - 1
+			// save position of current sequence in hash table
+			hashTable[hash] = pos + 1
+
+			// first reference or within 64k limit or current sequence !== hashed one: no match
+			if ( ref < 0 ||
+				((pos - ref) >>> 16) > 0 ||
+				(
+					((src[ref+3]<<8 | src[ref+2]) != sequenceHighBits) ||
+					((src[ref+1]<<8 | src[ref]) != sequenceLowBits )
+				)
+			) {
+				// increase step if nothing found within limit
+				step = findMatchAttempts++ >> skipStrength
+				pos += step
+				continue
+			}
+
+			findMatchAttempts = (1 << skipStrength) + 3
+
+			// got a match
+			var literals_length = pos - anchor
+			var offset = pos - ref
+
+			// minMatch already verified
+			pos += minMatch
+			ref += minMatch
+
+			// move to the end of the match (>=minMatch)
+			var match_length = pos
+			while (pos < srcLength && src[pos] == src[ref]) {
+				pos++
+				ref++
+			}
+
+			// match length
+			match_length = pos - match_length
+
+			// token
+			var token = match_length < mlMask ? match_length : mlMask
+
+			// encode literals length
+			if (literals_length >= runMask) {
+				// add match length to the token
+				dst[dpos++] = (runMask << mlBits) + token
+				for (var len = literals_length - runMask; len > 254; len -= 255) {
+					dst[dpos++] = 255
+				}
+				dst[dpos++] = len
+			} else {
+				// add match length to the token
+				dst[dpos++] = (literals_length << mlBits) + token
+			}
+
+			// write literals
+			for (var i = 0; i < literals_length; i++) {
+				dst[dpos++] = src[anchor+i]
+			}
+
+			// encode offset
+			dst[dpos++] = offset
+			dst[dpos++] = (offset >> 8)
+
+			// encode match length
+			if (match_length >= mlMask) {
+				match_length -= mlMask
+				while (match_length >= 255) {
+					match_length -= 255
+					dst[dpos++] = 255
+				}
+
+				dst[dpos++] = match_length
+			}
+
+			anchor = pos
+		}
+	}
+
+	// cannot compress input
+	if (anchor == 0) return 0
+
+	// Write last literals
+	// encode literals length
+	literals_length = src.length - anchor
+	if (literals_length >= runMask) {
+		// add match length to the token
+		dst[dpos++] = (runMask << mlBits)
+		for (var ln = literals_length - runMask; ln > 254; ln -= 255) {
+			dst[dpos++] = 255
+		}
+		dst[dpos++] = ln
+	} else {
+		// add match length to the token
+		dst[dpos++] = (literals_length << mlBits)
+	}
+
+	// write literals
+	pos = anchor
+	while (pos < src.length) {
+		dst[dpos++] = src[pos++]
+	}
+
+	return dpos
+}
+
+},{"cuint":10}],2:[function(require,module,exports){
+(function (Buffer){(function (){
+var Decoder = require('./decoder_stream')
+
+/**
+	Decode an LZ4 stream
+ */
+function LZ4_uncompress (input, options) {
+	var output = []
+	var decoder = new Decoder(options)
+
+	decoder.on('data', function (chunk) {
+		output.push(chunk)
+	})
+
+	decoder.end(input)
+
+	return Buffer.concat(output)
+}
+
+exports.LZ4_uncompress = LZ4_uncompress
+}).call(this)}).call(this,require("buffer").Buffer)
+},{"./decoder_stream":3,"buffer":"buffer"}],3:[function(require,module,exports){
+(function (Buffer){(function (){
+var Transform = require('stream').Transform
+var inherits = require('util').inherits
+
+var lz4_static = require('./static')
+var utils = lz4_static.utils
+var lz4_binding = utils.bindings
+var lz4_jsbinding = require('./binding')
+
+var STATES = lz4_static.STATES
+var SIZES = lz4_static.SIZES
+
+function Decoder (options) {
+	if ( !(this instanceof Decoder) )
+		return new Decoder(options)
+	
+	Transform.call(this, options)
+	// Options
+	this.options = options || {}
+
+	this.binding = this.options.useJS ? lz4_jsbinding : lz4_binding
+
+	// Encoded data being processed
+	this.buffer = null
+	// Current position within the data
+	this.pos = 0
+	this.descriptor = null
+
+	// Current state of the parsing
+	this.state = STATES.MAGIC
+
+	this.notEnoughData = false
+	this.descriptorStart = 0
+	this.streamSize = null
+	this.dictId = null
+	this.currentStreamChecksum = null
+	this.dataBlockSize = 0
+	this.skippableSize = 0
+}
+inherits(Decoder, Transform)
+
+Decoder.prototype._transform = function (data, encoding, done) {
+	// Handle skippable data
+	if (this.skippableSize > 0) {
+		this.skippableSize -= data.length
+		if (this.skippableSize > 0) {
+			// More to skip
+			done()
+			return
+		}
+
+		data = data.slice(-this.skippableSize)
+		this.skippableSize = 0
+		this.state = STATES.MAGIC
+	}
+	// Buffer the incoming data
+	this.buffer = this.buffer
+					? Buffer.concat( [ this.buffer, data ], this.buffer.length + data.length )
+					: data
+
+	this._main(done)
+}
+
+Decoder.prototype.emit_Error = function (msg) {
+	this.emit( 'error', new Error(msg + ' @' + this.pos) )
+}
+
+Decoder.prototype.check_Size = function (n) {
+	var delta = this.buffer.length - this.pos
+	if (delta <= 0 || delta < n) {
+		if (this.notEnoughData) this.emit_Error( 'Unexpected end of LZ4 stream' )
+		return true
+	}
+
+	this.pos += n
+	return false
+}
+
+Decoder.prototype.read_MagicNumber = function () {
+	var pos = this.pos
+	if ( this.check_Size(SIZES.MAGIC) ) return true
+
+	var magic = utils.readUInt32LE(this.buffer, pos)
+
+	// Skippable chunk
+	if ( (magic & 0xFFFFFFF0) === lz4_static.MAGICNUMBER_SKIPPABLE ) {
+		this.state = STATES.SKIP_SIZE
+		return
+	}
+
+	// LZ4 stream
+	if ( magic !== lz4_static.MAGICNUMBER ) {
+		this.pos = pos
+		this.emit_Error( 'Invalid magic number: ' + magic.toString(16).toUpperCase() )
+		return true
+	}
+
+	this.state = STATES.DESCRIPTOR
+}
+
+Decoder.prototype.read_SkippableSize = function () {
+	var pos = this.pos
+	if ( this.check_Size(SIZES.SKIP_SIZE) ) return true
+	this.state = STATES.SKIP_DATA
+	this.skippableSize = utils.readUInt32LE(this.buffer, pos)
+}
+
+Decoder.prototype.read_Descriptor = function () {
+	// Flags
+	var pos = this.pos
+	if ( this.check_Size(SIZES.DESCRIPTOR) ) return true
+
+	this.descriptorStart = pos
+
+	// version
+	var descriptor_flg = this.buffer[pos]
+	var version = descriptor_flg >> 6
+	if ( version !== lz4_static.VERSION ) {
+		this.pos = pos
+		this.emit_Error( 'Invalid version: ' + version + ' != ' + lz4_static.VERSION )
+		return true
+	}
+
+	// flags
+	// reserved bit should not be set
+	if ( (descriptor_flg >> 1) & 0x1 ) {
+		this.pos = pos
+		this.emit_Error('Reserved bit set')
+		return true
+	}
+
+	var blockMaxSizeIndex = (this.buffer[pos+1] >> 4) & 0x7
+	var blockMaxSize = lz4_static.blockMaxSizes[ blockMaxSizeIndex ]
+	if ( blockMaxSize === null ) {
+		this.pos = pos
+		this.emit_Error( 'Invalid block max size: ' + blockMaxSizeIndex )
+		return true
+	}
+
+	this.descriptor = {
+		blockIndependence: Boolean( (descriptor_flg >> 5) & 0x1 )
+	,	blockChecksum: Boolean( (descriptor_flg >> 4) & 0x1 )
+	,	blockMaxSize: blockMaxSize
+	,	streamSize: Boolean( (descriptor_flg >> 3) & 0x1 )
+	,	streamChecksum: Boolean( (descriptor_flg >> 2) & 0x1 )
+	,	dict: Boolean( descriptor_flg & 0x1 )
+	,	dictId: 0
+	}
+
+	this.state = STATES.SIZE
+}
+
+Decoder.prototype.read_Size = function () {
+	if (this.descriptor.streamSize) {
+		var pos = this.pos
+		if ( this.check_Size(SIZES.SIZE) ) return true
+		//TODO max size is unsigned 64 bits
+		this.streamSize = this.buffer.slice(pos, pos + 8)
+	}
+
+	this.state = STATES.DICTID
+}
+
+Decoder.prototype.read_DictId = function () {
+	if (this.descriptor.dictId) {
+		var pos = this.pos
+		if ( this.check_Size(SIZES.DICTID) ) return true
+		this.dictId = utils.readUInt32LE(this.buffer, pos)
+	}
+
+	this.state = STATES.DESCRIPTOR_CHECKSUM
+}
+
+Decoder.prototype.read_DescriptorChecksum = function () {
+	var pos = this.pos
+	if ( this.check_Size(SIZES.DESCRIPTOR_CHECKSUM) ) return true
+
+	var checksum = this.buffer[pos]
+	var currentChecksum = utils.descriptorChecksum( this.buffer.slice(this.descriptorStart, pos) )
+	if (currentChecksum !== checksum) {
+		this.pos = pos
+		this.emit_Error( 'Invalid stream descriptor checksum' )
+		return true
+	}
+
+	this.state = STATES.DATABLOCK_SIZE
+}
+
+Decoder.prototype.read_DataBlockSize = function () {
+	var pos = this.pos
+	if ( this.check_Size(SIZES.DATABLOCK_SIZE) ) return true
+	var datablock_size = utils.readUInt32LE(this.buffer, pos)
+	// Uncompressed
+	if ( datablock_size === lz4_static.EOS ) {
+		this.state = STATES.EOS
+		return
+	}
+
+// if (datablock_size > this.descriptor.blockMaxSize) {
+// 	this.emit_Error( 'ASSERTION: invalid datablock_size: ' + datablock_size.toString(16).toUpperCase() + ' > ' + this.descriptor.blockMaxSize.toString(16).toUpperCase() )
+// }
+	this.dataBlockSize = datablock_size
+
+	this.state = STATES.DATABLOCK_DATA
+}
+
+Decoder.prototype.read_DataBlockData = function () {
+	var pos = this.pos
+	var datablock_size = this.dataBlockSize
+	if ( datablock_size & 0x80000000 ) {
+		// Uncompressed size
+		datablock_size = datablock_size & 0x7FFFFFFF
+	}
+	if ( this.check_Size(datablock_size) ) return true
+
+	this.dataBlock = this.buffer.slice(pos, pos + datablock_size)
+
+	this.state = STATES.DATABLOCK_CHECKSUM
+}
+
+Decoder.prototype.read_DataBlockChecksum = function () {
+	var pos = this.pos
+	if (this.descriptor.blockChecksum) {
+		if ( this.check_Size(SIZES.DATABLOCK_CHECKSUM) ) return true
+		var checksum = utils.readUInt32LE(this.buffer, this.pos-4)
+		var currentChecksum = utils.blockChecksum( this.dataBlock )
+		if (currentChecksum !== checksum) {
+			this.pos = pos
+			this.emit_Error( 'Invalid block checksum' )
+			return true
+		}
+	}
+
+	this.state = STATES.DATABLOCK_UNCOMPRESS
+}
+
+Decoder.prototype.uncompress_DataBlock = function () {
+	var uncompressed
+	// uncompressed?
+	if ( this.dataBlockSize & 0x80000000 ) {
+		uncompressed = this.dataBlock
+	} else {
+		uncompressed = Buffer.alloc(this.descriptor.blockMaxSize)
+		var decodedSize = this.binding.uncompress( this.dataBlock, uncompressed )
+		if (decodedSize < 0) {
+			this.emit_Error( 'Invalid data block: ' + (-decodedSize) )
+			return true
+		}
+		if ( decodedSize < this.descriptor.blockMaxSize )
+			uncompressed = uncompressed.slice(0, decodedSize)
+	}
+	this.dataBlock = null
+	this.push( uncompressed )
+
+	// Stream checksum
+	if (this.descriptor.streamChecksum) {
+		this.currentStreamChecksum = utils.streamChecksum(uncompressed, this.currentStreamChecksum)
+	}
+
+	this.state = STATES.DATABLOCK_SIZE
+}
+
+Decoder.prototype.read_EOS = function () {
+	if (this.descriptor.streamChecksum) {
+		var pos = this.pos
+		if ( this.check_Size(SIZES.EOS) ) return true
+		var checksum = utils.readUInt32LE(this.buffer, pos)
+		if ( checksum !== utils.streamChecksum(null, this.currentStreamChecksum) ) {
+			this.pos = pos
+			this.emit_Error( 'Invalid stream checksum: ' + checksum.toString(16).toUpperCase() )
+			return true
+		}
+	}
+
+	this.state = STATES.MAGIC
+}
+
+Decoder.prototype._flush = function (done) {
+	// Error on missing data as no more will be coming
+	this.notEnoughData = true
+	this._main(done)
+}
+
+Decoder.prototype._main = function (done) {
+	var pos = this.pos
+	var notEnoughData
+
+	while ( !notEnoughData && this.pos < this.buffer.length ) {
+		if (this.state === STATES.MAGIC)
+			notEnoughData = this.read_MagicNumber()
+
+		if (this.state === STATES.SKIP_SIZE)
+			notEnoughData = this.read_SkippableSize()
+
+		if (this.state === STATES.DESCRIPTOR)
+			notEnoughData = this.read_Descriptor()
+
+		if (this.state === STATES.SIZE)
+			notEnoughData = this.read_Size()
+
+		if (this.state === STATES.DICTID)
+			notEnoughData = this.read_DictId()
+
+		if (this.state === STATES.DESCRIPTOR_CHECKSUM)
+			notEnoughData = this.read_DescriptorChecksum()
+
+		if (this.state === STATES.DATABLOCK_SIZE)
+			notEnoughData = this.read_DataBlockSize()
+
+		if (this.state === STATES.DATABLOCK_DATA)
+			notEnoughData = this.read_DataBlockData()
+
+		if (this.state === STATES.DATABLOCK_CHECKSUM)
+			notEnoughData = this.read_DataBlockChecksum()
+
+		if (this.state === STATES.DATABLOCK_UNCOMPRESS)
+			notEnoughData = this.uncompress_DataBlock()
+
+		if (this.state === STATES.EOS)
+			notEnoughData = this.read_EOS()
+	}
+
+	if (this.pos > pos) {
+		this.buffer = this.buffer.slice(this.pos)
+		this.pos = 0
+	}
+
+	done()
+}
+
+module.exports = Decoder
+
+}).call(this)}).call(this,require("buffer").Buffer)
+},{"./binding":1,"./static":6,"buffer":"buffer","stream":35,"util":40}],4:[function(require,module,exports){
+(function (Buffer){(function (){
+var Encoder = require('./encoder_stream')
+
+/**
+	Encode an LZ4 stream
+ */
+function LZ4_compress (input, options) {
+	var output = []
+	var encoder = new Encoder(options)
+
+	encoder.on('data', function (chunk) {
+		output.push(chunk)
+	})
+
+	encoder.end(input)
+
+	return Buffer.concat(output)
+}
+
+exports.LZ4_compress = LZ4_compress
+
+}).call(this)}).call(this,require("buffer").Buffer)
+},{"./encoder_stream":5,"buffer":"buffer"}],5:[function(require,module,exports){
+(function (Buffer){(function (){
+var Transform = require('stream').Transform
+var inherits = require('util').inherits
+
+var lz4_static = require('./static')
+var utils = lz4_static.utils
+var lz4_binding = utils.bindings
+var lz4_jsbinding = require('./binding')
+
+var STATES = lz4_static.STATES
+var SIZES = lz4_static.SIZES
+
+var defaultOptions = {
+	blockIndependence: true
+,	blockChecksum: false
+,	blockMaxSize: 4<<20
+,	streamSize: false
+,	streamChecksum: true
+,	dict: false
+,	dictId: 0
+,	highCompression: false
+}
+
+function Encoder (options) {
+	if ( !(this instanceof Encoder) )
+		return new Encoder(options)
+	
+	Transform.call(this, options)
+
+	// Set the options
+	var o = options || defaultOptions
+	if (o !== defaultOptions)
+		Object.keys(defaultOptions).forEach(function (p) {
+			if ( !o.hasOwnProperty(p) ) o[p] = defaultOptions[p]
+		})
+
+	this.options = o
+
+	this.binding = this.options.useJS ? lz4_jsbinding : lz4_binding
+	this.compress = o.highCompression ? this.binding.compressHC : this.binding.compress
+
+	// Build the stream descriptor from the options
+	// flags
+	var descriptor_flg = 0
+	descriptor_flg = descriptor_flg | (lz4_static.VERSION << 6)			// Version
+	descriptor_flg = descriptor_flg | ((o.blockIndependence & 1) << 5)	// Block independence
+	descriptor_flg = descriptor_flg | ((o.blockChecksum & 1) << 4)		// Block checksum
+	descriptor_flg = descriptor_flg | ((o.streamSize & 1) << 3)			// Stream size
+	descriptor_flg = descriptor_flg | ((o.streamChecksum & 1) << 2)		// Stream checksum
+																		// Reserved bit
+	descriptor_flg = descriptor_flg | (o.dict & 1)						// Preset dictionary
+
+	// block maximum size
+	var descriptor_bd = lz4_static.blockMaxSizes.indexOf(o.blockMaxSize)
+	if (descriptor_bd < 0)
+		throw new Error('Invalid blockMaxSize: ' + o.blockMaxSize)
+
+	this.descriptor = { flg: descriptor_flg, bd: (descriptor_bd & 0x7) << 4 }
+
+	// Data being processed
+	this.buffer = []
+	this.length = 0
+
+	this.first = true
+	this.checksum = null
+}
+inherits(Encoder, Transform)
+
+// Header = magic number + stream descriptor
+Encoder.prototype.headerSize = function () {
+	var streamSizeSize = this.options.streamSize ? SIZES.DESCRIPTOR : 0
+	var dictSize = this.options.dict ? SIZES.DICTID : 0
+
+	return SIZES.MAGIC + 1 + 1 + streamSizeSize + dictSize + 1
+}
+
+Encoder.prototype.header = function () {
+	var headerSize = this.headerSize()
+	var output = Buffer.alloc(headerSize)
+
+	this.state = STATES.MAGIC
+	output.writeInt32LE(lz4_static.MAGICNUMBER, 0)
+
+	this.state = STATES.DESCRIPTOR
+	var descriptor = output.slice(SIZES.MAGIC, output.length - 1)
+
+	// Update the stream descriptor
+	descriptor.writeUInt8(this.descriptor.flg, 0)
+	descriptor.writeUInt8(this.descriptor.bd, 1)
+
+	var pos = 2
+	this.state = STATES.SIZE
+	if (this.options.streamSize) {
+		//TODO only 32bits size supported
+		descriptor.writeInt32LE(0, pos)
+		descriptor.writeInt32LE(this.size, pos + 4)
+		pos += SIZES.SIZE
+	}
+	this.state = STATES.DICTID
+	if (this.options.dict) {
+		descriptor.writeInt32LE(this.dictId, pos)
+		pos += SIZES.DICTID
+	}
+
+	this.state = STATES.DESCRIPTOR_CHECKSUM
+	output.writeUInt8(
+	  utils.descriptorChecksum( descriptor )
+	, SIZES.MAGIC + pos
+	)
+
+	return output
+}
+
+Encoder.prototype.update_Checksum = function (data) {
+	// Calculate the stream checksum
+	this.state = STATES.CHECKSUM_UPDATE
+	if (this.options.streamChecksum) {
+		this.checksum = utils.streamChecksum(data, this.checksum)
+	}
+}
+
+Encoder.prototype.compress_DataBlock = function (data) {
+	this.state = STATES.DATABLOCK_COMPRESS
+	var dbChecksumSize = this.options.blockChecksum ? SIZES.DATABLOCK_CHECKSUM : 0
+	var maxBufSize = this.binding.compressBound(data.length)
+	var buf = Buffer.alloc( SIZES.DATABLOCK_SIZE + maxBufSize + dbChecksumSize )
+	var compressed = buf.slice(SIZES.DATABLOCK_SIZE, SIZES.DATABLOCK_SIZE + maxBufSize)
+	var compressedSize = this.compress(data, compressed)
+
+	// Set the block size
+	this.state = STATES.DATABLOCK_SIZE
+	// Block size shall never be larger than blockMaxSize
+	// console.log("blockMaxSize", this.options.blockMaxSize, "compressedSize", compressedSize)
+	if (compressedSize > 0 && compressedSize <= this.options.blockMaxSize) {
+		// highest bit is 0 (compressed data)
+		buf.writeUInt32LE(compressedSize, 0)
+		buf = buf.slice(0, SIZES.DATABLOCK_SIZE + compressedSize + dbChecksumSize)
+	} else {
+		// Cannot compress the data, leave it as is
+		// highest bit is 1 (uncompressed data)
+		buf.writeInt32LE( 0x80000000 | data.length, 0)
+		buf = buf.slice(0, SIZES.DATABLOCK_SIZE + data.length + dbChecksumSize)
+		data.copy(buf, SIZES.DATABLOCK_SIZE);
+	}
+
+	// Set the block checksum
+	this.state = STATES.DATABLOCK_CHECKSUM
+	if (this.options.blockChecksum) {
+		// xxHash checksum on undecoded data with a seed of 0
+		var checksum = buf.slice(-dbChecksumSize)
+		checksum.writeInt32LE( utils.blockChecksum(compressed), 0 )
+	}
+
+	// Update the stream checksum
+	this.update_Checksum(data)
+
+	this.size += data.length
+
+	return buf
+}
+
+Encoder.prototype._transform = function (data, encoding, done) {
+	if (data) {
+		// Buffer the incoming data
+		this.buffer.push(data)
+		this.length += data.length
+	}
+
+	// Stream header
+	if (this.first) {
+		this.push( this.header() )
+		this.first = false
+	}
+
+	var blockMaxSize = this.options.blockMaxSize
+	// Not enough data for a block
+	if ( this.length < blockMaxSize ) return done()
+
+	// Build the data to be compressed
+	var buf = Buffer.concat(this.buffer, this.length)
+
+	for (var j = 0, i = buf.length; i >= blockMaxSize; i -= blockMaxSize, j += blockMaxSize) {
+		// Compress the block
+		this.push( this.compress_DataBlock( buf.slice(j, j + blockMaxSize) ) )
+	}
+
+	// Set the remaining data
+	if (i > 0) {
+		this.buffer = [ buf.slice(j) ]
+		this.length = this.buffer[0].length
+	} else {
+		this.buffer = []
+		this.length = 0
+	}
+
+	done()
+}
+
+Encoder.prototype._flush = function (done) {
+	if (this.first) {
+		this.push( this.header() )
+		this.first = false
+	}
+
+	if (this.length > 0) {
+		var buf = Buffer.concat(this.buffer, this.length)
+		this.buffer = []
+		this.length = 0
+		var cc = this.compress_DataBlock(buf)
+		this.push( cc )
+	}
+
+	if (this.options.streamChecksum) {
+		this.state = STATES.CHECKSUM
+		var eos = Buffer.alloc(SIZES.EOS + SIZES.CHECKSUM)
+		eos.writeUInt32LE( utils.streamChecksum(null, this.checksum), SIZES.EOS )
+	} else {
+		var eos = Buffer.alloc(SIZES.EOS)
+	}
+
+	this.state = STATES.EOS
+	eos.writeInt32LE(lz4_static.EOS, 0)
+	this.push(eos)
+
+	done()
+}
+
+module.exports = Encoder
+
+}).call(this)}).call(this,require("buffer").Buffer)
+},{"./binding":1,"./static":6,"buffer":"buffer","stream":35,"util":40}],6:[function(require,module,exports){
+(function (Buffer){(function (){
+/**
+ * LZ4 based compression and decompression
+ * Copyright (c) 2014 Pierre Curto
+ * MIT Licensed
+ */
+
+// LZ4 stream constants
+exports.MAGICNUMBER = 0x184D2204
+exports.MAGICNUMBER_BUFFER = Buffer.alloc(4)
+exports.MAGICNUMBER_BUFFER.writeUInt32LE(exports.MAGICNUMBER, 0)
+
+exports.EOS = 0
+exports.EOS_BUFFER = Buffer.alloc(4)
+exports.EOS_BUFFER.writeUInt32LE(exports.EOS, 0)
+
+exports.VERSION = 1
+
+exports.MAGICNUMBER_SKIPPABLE = 0x184D2A50
+
+// n/a, n/a, n/a, n/a, 64KB, 256KB, 1MB, 4MB
+exports.blockMaxSizes = [ null, null, null, null, 64<<10, 256<<10, 1<<20, 4<<20 ]
+
+// Compressed file extension
+exports.extension = '.lz4'
+
+// Internal stream states
+exports.STATES = {
+// Compressed stream
+	MAGIC: 0
+,	DESCRIPTOR: 1
+,	SIZE: 2
+,	DICTID: 3
+,	DESCRIPTOR_CHECKSUM: 4
+,	DATABLOCK_SIZE: 5
+,	DATABLOCK_DATA: 6
+,	DATABLOCK_CHECKSUM: 7
+,	DATABLOCK_UNCOMPRESS: 8
+,	DATABLOCK_COMPRESS: 9
+,	CHECKSUM: 10
+,	CHECKSUM_UPDATE: 11
+,	EOS: 90
+// Skippable chunk
+,	SKIP_SIZE: 101
+,	SKIP_DATA: 102
+}
+
+exports.SIZES = {
+	MAGIC: 4
+,	DESCRIPTOR: 2
+,	SIZE: 8
+,	DICTID: 4
+,	DESCRIPTOR_CHECKSUM: 1
+,	DATABLOCK_SIZE: 4
+,	DATABLOCK_CHECKSUM: 4
+,	CHECKSUM: 4
+,	EOS: 4
+,	SKIP_SIZE: 4
+}
+
+exports.utils = require('./utils')
+
+}).call(this)}).call(this,require("buffer").Buffer)
+},{"./utils":"./utils","buffer":"buffer"}],7:[function(require,module,exports){
 'use strict'
 
 exports.byteLength = byteLength
@@ -165,9 +1088,7 @@ function fromByteArray (uint8) {
 
   // go through the array every three bytes, we'll deal with trailing stuff later
   for (var i = 0, len2 = len - extraBytes; i < len2; i += maxChunkLength) {
-    parts.push(encodeChunk(
-      uint8, i, (i + maxChunkLength) > len2 ? len2 : (i + maxChunkLength)
-    ))
+    parts.push(encodeChunk(uint8, i, (i + maxChunkLength) > len2 ? len2 : (i + maxChunkLength)))
   }
 
   // pad the end with zeros, but make sure to not forget the extra bytes
@@ -191,10 +1112,10 @@ function fromByteArray (uint8) {
   return parts.join('')
 }
 
-},{}],2:[function(require,module,exports){
+},{}],8:[function(require,module,exports){
 
-},{}],3:[function(require,module,exports){
-(function (Buffer){
+},{}],9:[function(require,module,exports){
+(function (Buffer){(function (){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -303,8 +1224,1114 @@ function objectToString(o) {
   return Object.prototype.toString.call(o);
 }
 
-}).call(this,{"isBuffer":require("../../is-buffer/index.js")})
-},{"../../is-buffer/index.js":7}],4:[function(require,module,exports){
+}).call(this)}).call(this,{"isBuffer":require("../../is-buffer/index.js")})
+},{"../../is-buffer/index.js":16}],10:[function(require,module,exports){
+exports.UINT32 = require('./lib/uint32')
+exports.UINT64 = require('./lib/uint64')
+},{"./lib/uint32":11,"./lib/uint64":12}],11:[function(require,module,exports){
+/**
+	C-like unsigned 32 bits integers in Javascript
+	Copyright (C) 2013, Pierre Curto
+	MIT license
+ */
+;(function (root) {
+
+	// Local cache for typical radices
+	var radixPowerCache = {
+		36: UINT32( Math.pow(36, 5) )
+	,	16: UINT32( Math.pow(16, 7) )
+	,	10: UINT32( Math.pow(10, 9) )
+	,	2:  UINT32( Math.pow(2, 30) )
+	}
+	var radixCache = {
+		36: UINT32(36)
+	,	16: UINT32(16)
+	,	10: UINT32(10)
+	,	2:  UINT32(2)
+	}
+
+	/**
+	 *	Represents an unsigned 32 bits integer
+	 * @constructor
+	 * @param {Number|String|Number} low bits     | integer as a string 		 | integer as a number
+	 * @param {Number|Number|Undefined} high bits | radix (optional, default=10)
+	 * @return 
+	 */
+	function UINT32 (l, h) {
+		if ( !(this instanceof UINT32) )
+			return new UINT32(l, h)
+
+		this._low = 0
+		this._high = 0
+		this.remainder = null
+		if (typeof h == 'undefined')
+			return fromNumber.call(this, l)
+
+		if (typeof l == 'string')
+			return fromString.call(this, l, h)
+
+		fromBits.call(this, l, h)
+	}
+
+	/**
+	 * Set the current _UINT32_ object with its low and high bits
+	 * @method fromBits
+	 * @param {Number} low bits
+	 * @param {Number} high bits
+	 * @return ThisExpression
+	 */
+	function fromBits (l, h) {
+		this._low = l | 0
+		this._high = h | 0
+
+		return this
+	}
+	UINT32.prototype.fromBits = fromBits
+
+	/**
+	 * Set the current _UINT32_ object from a number
+	 * @method fromNumber
+	 * @param {Number} number
+	 * @return ThisExpression
+	 */
+	function fromNumber (value) {
+		this._low = value & 0xFFFF
+		this._high = value >>> 16
+
+		return this
+	}
+	UINT32.prototype.fromNumber = fromNumber
+
+	/**
+	 * Set the current _UINT32_ object from a string
+	 * @method fromString
+	 * @param {String} integer as a string
+	 * @param {Number} radix (optional, default=10)
+	 * @return ThisExpression
+	 */
+	function fromString (s, radix) {
+		var value = parseInt(s, radix || 10)
+
+		this._low = value & 0xFFFF
+		this._high = value >>> 16
+
+		return this
+	}
+	UINT32.prototype.fromString = fromString
+
+	/**
+	 * Convert this _UINT32_ to a number
+	 * @method toNumber
+	 * @return {Number} the converted UINT32
+	 */
+	UINT32.prototype.toNumber = function () {
+		return (this._high * 65536) + this._low
+	}
+
+	/**
+	 * Convert this _UINT32_ to a string
+	 * @method toString
+	 * @param {Number} radix (optional, default=10)
+	 * @return {String} the converted UINT32
+	 */
+	UINT32.prototype.toString = function (radix) {
+		return this.toNumber().toString(radix || 10)
+	}
+
+	/**
+	 * Add two _UINT32_. The current _UINT32_ stores the result
+	 * @method add
+	 * @param {Object} other UINT32
+	 * @return ThisExpression
+	 */
+	UINT32.prototype.add = function (other) {
+		var a00 = this._low + other._low
+		var a16 = a00 >>> 16
+
+		a16 += this._high + other._high
+
+		this._low = a00 & 0xFFFF
+		this._high = a16 & 0xFFFF
+
+		return this
+	}
+
+	/**
+	 * Subtract two _UINT32_. The current _UINT32_ stores the result
+	 * @method subtract
+	 * @param {Object} other UINT32
+	 * @return ThisExpression
+	 */
+	UINT32.prototype.subtract = function (other) {
+		//TODO inline
+		return this.add( other.clone().negate() )
+	}
+
+	/**
+	 * Multiply two _UINT32_. The current _UINT32_ stores the result
+	 * @method multiply
+	 * @param {Object} other UINT32
+	 * @return ThisExpression
+	 */
+	UINT32.prototype.multiply = function (other) {
+		/*
+			a = a00 + a16
+			b = b00 + b16
+			a*b = (a00 + a16)(b00 + b16)
+				= a00b00 + a00b16 + a16b00 + a16b16
+
+			a16b16 overflows the 32bits
+		 */
+		var a16 = this._high
+		var a00 = this._low
+		var b16 = other._high
+		var b00 = other._low
+
+/* Removed to increase speed under normal circumstances (i.e. not multiplying by 0 or 1)
+		// this == 0 or other == 1: nothing to do
+		if ((a00 == 0 && a16 == 0) || (b00 == 1 && b16 == 0)) return this
+
+		// other == 0 or this == 1: this = other
+		if ((b00 == 0 && b16 == 0) || (a00 == 1 && a16 == 0)) {
+			this._low = other._low
+			this._high = other._high
+			return this
+		}
+*/
+
+		var c16, c00
+		c00 = a00 * b00
+		c16 = c00 >>> 16
+
+		c16 += a16 * b00
+		c16 &= 0xFFFF		// Not required but improves performance
+		c16 += a00 * b16
+
+		this._low = c00 & 0xFFFF
+		this._high = c16 & 0xFFFF
+
+		return this
+	}
+
+	/**
+	 * Divide two _UINT32_. The current _UINT32_ stores the result.
+	 * The remainder is made available as the _remainder_ property on
+	 * the _UINT32_ object. It can be null, meaning there are no remainder.
+	 * @method div
+	 * @param {Object} other UINT32
+	 * @return ThisExpression
+	 */
+	UINT32.prototype.div = function (other) {
+		if ( (other._low == 0) && (other._high == 0) ) throw Error('division by zero')
+
+		// other == 1
+		if (other._high == 0 && other._low == 1) {
+			this.remainder = new UINT32(0)
+			return this
+		}
+
+		// other > this: 0
+		if ( other.gt(this) ) {
+			this.remainder = this.clone()
+			this._low = 0
+			this._high = 0
+			return this
+		}
+		// other == this: 1
+		if ( this.eq(other) ) {
+			this.remainder = new UINT32(0)
+			this._low = 1
+			this._high = 0
+			return this
+		}
+
+		// Shift the divisor left until it is higher than the dividend
+		var _other = other.clone()
+		var i = -1
+		while ( !this.lt(_other) ) {
+			// High bit can overflow the default 16bits
+			// Its ok since we right shift after this loop
+			// The overflown bit must be kept though
+			_other.shiftLeft(1, true)
+			i++
+		}
+
+		// Set the remainder
+		this.remainder = this.clone()
+		// Initialize the current result to 0
+		this._low = 0
+		this._high = 0
+		for (; i >= 0; i--) {
+			_other.shiftRight(1)
+			// If shifted divisor is smaller than the dividend
+			// then subtract it from the dividend
+			if ( !this.remainder.lt(_other) ) {
+				this.remainder.subtract(_other)
+				// Update the current result
+				if (i >= 16) {
+					this._high |= 1 << (i - 16)
+				} else {
+					this._low |= 1 << i
+				}
+			}
+		}
+
+		return this
+	}
+
+	/**
+	 * Negate the current _UINT32_
+	 * @method negate
+	 * @return ThisExpression
+	 */
+	UINT32.prototype.negate = function () {
+		var v = ( ~this._low & 0xFFFF ) + 1
+		this._low = v & 0xFFFF
+		this._high = (~this._high + (v >>> 16)) & 0xFFFF
+
+		return this
+	}
+
+	/**
+	 * Equals
+	 * @method eq
+	 * @param {Object} other UINT32
+	 * @return {Boolean}
+	 */
+	UINT32.prototype.equals = UINT32.prototype.eq = function (other) {
+		return (this._low == other._low) && (this._high == other._high)
+	}
+
+	/**
+	 * Greater than (strict)
+	 * @method gt
+	 * @param {Object} other UINT32
+	 * @return {Boolean}
+	 */
+	UINT32.prototype.greaterThan = UINT32.prototype.gt = function (other) {
+		if (this._high > other._high) return true
+		if (this._high < other._high) return false
+		return this._low > other._low
+	}
+
+	/**
+	 * Less than (strict)
+	 * @method lt
+	 * @param {Object} other UINT32
+	 * @return {Boolean}
+	 */
+	UINT32.prototype.lessThan = UINT32.prototype.lt = function (other) {
+		if (this._high < other._high) return true
+		if (this._high > other._high) return false
+		return this._low < other._low
+	}
+
+	/**
+	 * Bitwise OR
+	 * @method or
+	 * @param {Object} other UINT32
+	 * @return ThisExpression
+	 */
+	UINT32.prototype.or = function (other) {
+		this._low |= other._low
+		this._high |= other._high
+
+		return this
+	}
+
+	/**
+	 * Bitwise AND
+	 * @method and
+	 * @param {Object} other UINT32
+	 * @return ThisExpression
+	 */
+	UINT32.prototype.and = function (other) {
+		this._low &= other._low
+		this._high &= other._high
+
+		return this
+	}
+
+	/**
+	 * Bitwise NOT
+	 * @method not
+	 * @return ThisExpression
+	 */
+	UINT32.prototype.not = function() {
+		this._low = ~this._low & 0xFFFF
+		this._high = ~this._high & 0xFFFF
+
+		return this
+	}
+
+	/**
+	 * Bitwise XOR
+	 * @method xor
+	 * @param {Object} other UINT32
+	 * @return ThisExpression
+	 */
+	UINT32.prototype.xor = function (other) {
+		this._low ^= other._low
+		this._high ^= other._high
+
+		return this
+	}
+
+	/**
+	 * Bitwise shift right
+	 * @method shiftRight
+	 * @param {Number} number of bits to shift
+	 * @return ThisExpression
+	 */
+	UINT32.prototype.shiftRight = UINT32.prototype.shiftr = function (n) {
+		if (n > 16) {
+			this._low = this._high >> (n - 16)
+			this._high = 0
+		} else if (n == 16) {
+			this._low = this._high
+			this._high = 0
+		} else {
+			this._low = (this._low >> n) | ( (this._high << (16-n)) & 0xFFFF )
+			this._high >>= n
+		}
+
+		return this
+	}
+
+	/**
+	 * Bitwise shift left
+	 * @method shiftLeft
+	 * @param {Number} number of bits to shift
+	 * @param {Boolean} allow overflow
+	 * @return ThisExpression
+	 */
+	UINT32.prototype.shiftLeft = UINT32.prototype.shiftl = function (n, allowOverflow) {
+		if (n > 16) {
+			this._high = this._low << (n - 16)
+			this._low = 0
+			if (!allowOverflow) {
+				this._high &= 0xFFFF
+			}
+		} else if (n == 16) {
+			this._high = this._low
+			this._low = 0
+		} else {
+			this._high = (this._high << n) | (this._low >> (16-n))
+			this._low = (this._low << n) & 0xFFFF
+			if (!allowOverflow) {
+				// Overflow only allowed on the high bits...
+				this._high &= 0xFFFF
+			}
+		}
+
+		return this
+	}
+
+	/**
+	 * Bitwise rotate left
+	 * @method rotl
+	 * @param {Number} number of bits to rotate
+	 * @return ThisExpression
+	 */
+	UINT32.prototype.rotateLeft = UINT32.prototype.rotl = function (n) {
+		var v = (this._high << 16) | this._low
+		v = (v << n) | (v >>> (32 - n))
+		this._low = v & 0xFFFF
+		this._high = v >>> 16
+
+		return this
+	}
+
+	/**
+	 * Bitwise rotate right
+	 * @method rotr
+	 * @param {Number} number of bits to rotate
+	 * @return ThisExpression
+	 */
+	UINT32.prototype.rotateRight = UINT32.prototype.rotr = function (n) {
+		var v = (this._high << 16) | this._low
+		v = (v >>> n) | (v << (32 - n))
+		this._low = v & 0xFFFF
+		this._high = v >>> 16
+
+		return this
+	}
+
+	/**
+	 * Clone the current _UINT32_
+	 * @method clone
+	 * @return {Object} cloned UINT32
+	 */
+	UINT32.prototype.clone = function () {
+		return new UINT32(this._low, this._high)
+	}
+
+	if (typeof define != 'undefined' && define.amd) {
+		// AMD / RequireJS
+		define([], function () {
+			return UINT32
+		})
+	} else if (typeof module != 'undefined' && module.exports) {
+		// Node.js
+		module.exports = UINT32
+	} else {
+		// Browser
+		root['UINT32'] = UINT32
+	}
+
+})(this)
+
+},{}],12:[function(require,module,exports){
+/**
+	C-like unsigned 64 bits integers in Javascript
+	Copyright (C) 2013, Pierre Curto
+	MIT license
+ */
+;(function (root) {
+
+	// Local cache for typical radices
+	var radixPowerCache = {
+		16: UINT64( Math.pow(16, 5) )
+	,	10: UINT64( Math.pow(10, 5) )
+	,	2:  UINT64( Math.pow(2, 5) )
+	}
+	var radixCache = {
+		16: UINT64(16)
+	,	10: UINT64(10)
+	,	2:  UINT64(2)
+	}
+
+	/**
+	 *	Represents an unsigned 64 bits integer
+	 * @constructor
+	 * @param {Number} first low bits (8)
+	 * @param {Number} second low bits (8)
+	 * @param {Number} first high bits (8)
+	 * @param {Number} second high bits (8)
+	 * or
+	 * @param {Number} low bits (32)
+	 * @param {Number} high bits (32)
+	 * or
+	 * @param {String|Number} integer as a string 		 | integer as a number
+	 * @param {Number|Undefined} radix (optional, default=10)
+	 * @return 
+	 */
+	function UINT64 (a00, a16, a32, a48) {
+		if ( !(this instanceof UINT64) )
+			return new UINT64(a00, a16, a32, a48)
+
+		this.remainder = null
+		if (typeof a00 == 'string')
+			return fromString.call(this, a00, a16)
+
+		if (typeof a16 == 'undefined')
+			return fromNumber.call(this, a00)
+
+		fromBits.apply(this, arguments)
+	}
+
+	/**
+	 * Set the current _UINT64_ object with its low and high bits
+	 * @method fromBits
+	 * @param {Number} first low bits (8)
+	 * @param {Number} second low bits (8)
+	 * @param {Number} first high bits (8)
+	 * @param {Number} second high bits (8)
+	 * or
+	 * @param {Number} low bits (32)
+	 * @param {Number} high bits (32)
+	 * @return ThisExpression
+	 */
+	function fromBits (a00, a16, a32, a48) {
+		if (typeof a32 == 'undefined') {
+			this._a00 = a00 & 0xFFFF
+			this._a16 = a00 >>> 16
+			this._a32 = a16 & 0xFFFF
+			this._a48 = a16 >>> 16
+			return this
+		}
+
+		this._a00 = a00 | 0
+		this._a16 = a16 | 0
+		this._a32 = a32 | 0
+		this._a48 = a48 | 0
+
+		return this
+	}
+	UINT64.prototype.fromBits = fromBits
+
+	/**
+	 * Set the current _UINT64_ object from a number
+	 * @method fromNumber
+	 * @param {Number} number
+	 * @return ThisExpression
+	 */
+	function fromNumber (value) {
+		this._a00 = value & 0xFFFF
+		this._a16 = value >>> 16
+		this._a32 = 0
+		this._a48 = 0
+
+		return this
+	}
+	UINT64.prototype.fromNumber = fromNumber
+
+	/**
+	 * Set the current _UINT64_ object from a string
+	 * @method fromString
+	 * @param {String} integer as a string
+	 * @param {Number} radix (optional, default=10)
+	 * @return ThisExpression
+	 */
+	function fromString (s, radix) {
+		radix = radix || 10
+
+		this._a00 = 0
+		this._a16 = 0
+		this._a32 = 0
+		this._a48 = 0
+
+		/*
+			In Javascript, bitwise operators only operate on the first 32 bits 
+			of a number, even though parseInt() encodes numbers with a 53 bits 
+			mantissa.
+			Therefore UINT64(<Number>) can only work on 32 bits.
+			The radix maximum value is 36 (as per ECMA specs) (26 letters + 10 digits)
+			maximum input value is m = 32bits as 1 = 2^32 - 1
+			So the maximum substring length n is:
+			36^(n+1) - 1 = 2^32 - 1
+			36^(n+1) = 2^32
+			(n+1)ln(36) = 32ln(2)
+			n = 32ln(2)/ln(36) - 1
+			n = 5.189644915687692
+			n = 5
+		 */
+		var radixUint = radixPowerCache[radix] || new UINT64( Math.pow(radix, 5) )
+
+		for (var i = 0, len = s.length; i < len; i += 5) {
+			var size = Math.min(5, len - i)
+			var value = parseInt( s.slice(i, i + size), radix )
+			this.multiply(
+					size < 5
+						? new UINT64( Math.pow(radix, size) )
+						: radixUint
+				)
+				.add( new UINT64(value) )
+		}
+
+		return this
+	}
+	UINT64.prototype.fromString = fromString
+
+	/**
+	 * Convert this _UINT64_ to a number (last 32 bits are dropped)
+	 * @method toNumber
+	 * @return {Number} the converted UINT64
+	 */
+	UINT64.prototype.toNumber = function () {
+		return (this._a16 * 65536) + this._a00
+	}
+
+	/**
+	 * Convert this _UINT64_ to a string
+	 * @method toString
+	 * @param {Number} radix (optional, default=10)
+	 * @return {String} the converted UINT64
+	 */
+	UINT64.prototype.toString = function (radix) {
+		radix = radix || 10
+		var radixUint = radixCache[radix] || new UINT64(radix)
+
+		if ( !this.gt(radixUint) ) return this.toNumber().toString(radix)
+
+		var self = this.clone()
+		var res = new Array(64)
+		for (var i = 63; i >= 0; i--) {
+			self.div(radixUint)
+			res[i] = self.remainder.toNumber().toString(radix)
+			if ( !self.gt(radixUint) ) break
+		}
+		res[i-1] = self.toNumber().toString(radix)
+
+		return res.join('')
+	}
+
+	/**
+	 * Add two _UINT64_. The current _UINT64_ stores the result
+	 * @method add
+	 * @param {Object} other UINT64
+	 * @return ThisExpression
+	 */
+	UINT64.prototype.add = function (other) {
+		var a00 = this._a00 + other._a00
+
+		var a16 = a00 >>> 16
+		a16 += this._a16 + other._a16
+
+		var a32 = a16 >>> 16
+		a32 += this._a32 + other._a32
+
+		var a48 = a32 >>> 16
+		a48 += this._a48 + other._a48
+
+		this._a00 = a00 & 0xFFFF
+		this._a16 = a16 & 0xFFFF
+		this._a32 = a32 & 0xFFFF
+		this._a48 = a48 & 0xFFFF
+
+		return this
+	}
+
+	/**
+	 * Subtract two _UINT64_. The current _UINT64_ stores the result
+	 * @method subtract
+	 * @param {Object} other UINT64
+	 * @return ThisExpression
+	 */
+	UINT64.prototype.subtract = function (other) {
+		return this.add( other.clone().negate() )
+	}
+
+	/**
+	 * Multiply two _UINT64_. The current _UINT64_ stores the result
+	 * @method multiply
+	 * @param {Object} other UINT64
+	 * @return ThisExpression
+	 */
+	UINT64.prototype.multiply = function (other) {
+		/*
+			a = a00 + a16 + a32 + a48
+			b = b00 + b16 + b32 + b48
+			a*b = (a00 + a16 + a32 + a48)(b00 + b16 + b32 + b48)
+				= a00b00 + a00b16 + a00b32 + a00b48
+				+ a16b00 + a16b16 + a16b32 + a16b48
+				+ a32b00 + a32b16 + a32b32 + a32b48
+				+ a48b00 + a48b16 + a48b32 + a48b48
+
+			a16b48, a32b32, a48b16, a48b32 and a48b48 overflow the 64 bits
+			so it comes down to:
+			a*b	= a00b00 + a00b16 + a00b32 + a00b48
+				+ a16b00 + a16b16 + a16b32
+				+ a32b00 + a32b16
+				+ a48b00
+				= a00b00
+				+ a00b16 + a16b00
+				+ a00b32 + a16b16 + a32b00
+				+ a00b48 + a16b32 + a32b16 + a48b00
+		 */
+		var a00 = this._a00
+		var a16 = this._a16
+		var a32 = this._a32
+		var a48 = this._a48
+		var b00 = other._a00
+		var b16 = other._a16
+		var b32 = other._a32
+		var b48 = other._a48
+
+		var c00 = a00 * b00
+
+		var c16 = c00 >>> 16
+		c16 += a00 * b16
+		var c32 = c16 >>> 16
+		c16 &= 0xFFFF
+		c16 += a16 * b00
+
+		c32 += c16 >>> 16
+		c32 += a00 * b32
+		var c48 = c32 >>> 16
+		c32 &= 0xFFFF
+		c32 += a16 * b16
+		c48 += c32 >>> 16
+		c32 &= 0xFFFF
+		c32 += a32 * b00
+
+		c48 += c32 >>> 16
+		c48 += a00 * b48
+		c48 &= 0xFFFF
+		c48 += a16 * b32
+		c48 &= 0xFFFF
+		c48 += a32 * b16
+		c48 &= 0xFFFF
+		c48 += a48 * b00
+
+		this._a00 = c00 & 0xFFFF
+		this._a16 = c16 & 0xFFFF
+		this._a32 = c32 & 0xFFFF
+		this._a48 = c48 & 0xFFFF
+
+		return this
+	}
+
+	/**
+	 * Divide two _UINT64_. The current _UINT64_ stores the result.
+	 * The remainder is made available as the _remainder_ property on
+	 * the _UINT64_ object. It can be null, meaning there are no remainder.
+	 * @method div
+	 * @param {Object} other UINT64
+	 * @return ThisExpression
+	 */
+	UINT64.prototype.div = function (other) {
+		if ( (other._a16 == 0) && (other._a32 == 0) && (other._a48 == 0) ) {
+			if (other._a00 == 0) throw Error('division by zero')
+
+			// other == 1: this
+			if (other._a00 == 1) {
+				this.remainder = new UINT64(0)
+				return this
+			}
+		}
+
+		// other > this: 0
+		if ( other.gt(this) ) {
+			this.remainder = this.clone()
+			this._a00 = 0
+			this._a16 = 0
+			this._a32 = 0
+			this._a48 = 0
+			return this
+		}
+		// other == this: 1
+		if ( this.eq(other) ) {
+			this.remainder = new UINT64(0)
+			this._a00 = 1
+			this._a16 = 0
+			this._a32 = 0
+			this._a48 = 0
+			return this
+		}
+
+		// Shift the divisor left until it is higher than the dividend
+		var _other = other.clone()
+		var i = -1
+		while ( !this.lt(_other) ) {
+			// High bit can overflow the default 16bits
+			// Its ok since we right shift after this loop
+			// The overflown bit must be kept though
+			_other.shiftLeft(1, true)
+			i++
+		}
+
+		// Set the remainder
+		this.remainder = this.clone()
+		// Initialize the current result to 0
+		this._a00 = 0
+		this._a16 = 0
+		this._a32 = 0
+		this._a48 = 0
+		for (; i >= 0; i--) {
+			_other.shiftRight(1)
+			// If shifted divisor is smaller than the dividend
+			// then subtract it from the dividend
+			if ( !this.remainder.lt(_other) ) {
+				this.remainder.subtract(_other)
+				// Update the current result
+				if (i >= 48) {
+					this._a48 |= 1 << (i - 48)
+				} else if (i >= 32) {
+					this._a32 |= 1 << (i - 32)
+				} else if (i >= 16) {
+					this._a16 |= 1 << (i - 16)
+				} else {
+					this._a00 |= 1 << i
+				}
+			}
+		}
+
+		return this
+	}
+
+	/**
+	 * Negate the current _UINT64_
+	 * @method negate
+	 * @return ThisExpression
+	 */
+	UINT64.prototype.negate = function () {
+		var v = ( ~this._a00 & 0xFFFF ) + 1
+		this._a00 = v & 0xFFFF
+		v = (~this._a16 & 0xFFFF) + (v >>> 16)
+		this._a16 = v & 0xFFFF
+		v = (~this._a32 & 0xFFFF) + (v >>> 16)
+		this._a32 = v & 0xFFFF
+		this._a48 = (~this._a48 + (v >>> 16)) & 0xFFFF
+
+		return this
+	}
+
+	/**
+
+	 * @method eq
+	 * @param {Object} other UINT64
+	 * @return {Boolean}
+	 */
+	UINT64.prototype.equals = UINT64.prototype.eq = function (other) {
+		return (this._a48 == other._a48) && (this._a00 == other._a00)
+			 && (this._a32 == other._a32) && (this._a16 == other._a16)
+	}
+
+	/**
+	 * Greater than (strict)
+	 * @method gt
+	 * @param {Object} other UINT64
+	 * @return {Boolean}
+	 */
+	UINT64.prototype.greaterThan = UINT64.prototype.gt = function (other) {
+		if (this._a48 > other._a48) return true
+		if (this._a48 < other._a48) return false
+		if (this._a32 > other._a32) return true
+		if (this._a32 < other._a32) return false
+		if (this._a16 > other._a16) return true
+		if (this._a16 < other._a16) return false
+		return this._a00 > other._a00
+	}
+
+	/**
+	 * Less than (strict)
+	 * @method lt
+	 * @param {Object} other UINT64
+	 * @return {Boolean}
+	 */
+	UINT64.prototype.lessThan = UINT64.prototype.lt = function (other) {
+		if (this._a48 < other._a48) return true
+		if (this._a48 > other._a48) return false
+		if (this._a32 < other._a32) return true
+		if (this._a32 > other._a32) return false
+		if (this._a16 < other._a16) return true
+		if (this._a16 > other._a16) return false
+		return this._a00 < other._a00
+	}
+
+	/**
+	 * Bitwise OR
+	 * @method or
+	 * @param {Object} other UINT64
+	 * @return ThisExpression
+	 */
+	UINT64.prototype.or = function (other) {
+		this._a00 |= other._a00
+		this._a16 |= other._a16
+		this._a32 |= other._a32
+		this._a48 |= other._a48
+
+		return this
+	}
+
+	/**
+	 * Bitwise AND
+	 * @method and
+	 * @param {Object} other UINT64
+	 * @return ThisExpression
+	 */
+	UINT64.prototype.and = function (other) {
+		this._a00 &= other._a00
+		this._a16 &= other._a16
+		this._a32 &= other._a32
+		this._a48 &= other._a48
+
+		return this
+	}
+
+	/**
+	 * Bitwise XOR
+	 * @method xor
+	 * @param {Object} other UINT64
+	 * @return ThisExpression
+	 */
+	UINT64.prototype.xor = function (other) {
+		this._a00 ^= other._a00
+		this._a16 ^= other._a16
+		this._a32 ^= other._a32
+		this._a48 ^= other._a48
+
+		return this
+	}
+
+	/**
+	 * Bitwise NOT
+	 * @method not
+	 * @return ThisExpression
+	 */
+	UINT64.prototype.not = function() {
+		this._a00 = ~this._a00 & 0xFFFF
+		this._a16 = ~this._a16 & 0xFFFF
+		this._a32 = ~this._a32 & 0xFFFF
+		this._a48 = ~this._a48 & 0xFFFF
+
+		return this
+	}
+
+	/**
+	 * Bitwise shift right
+	 * @method shiftRight
+	 * @param {Number} number of bits to shift
+	 * @return ThisExpression
+	 */
+	UINT64.prototype.shiftRight = UINT64.prototype.shiftr = function (n) {
+		n %= 64
+		if (n >= 48) {
+			this._a00 = this._a48 >> (n - 48)
+			this._a16 = 0
+			this._a32 = 0
+			this._a48 = 0
+		} else if (n >= 32) {
+			n -= 32
+			this._a00 = ( (this._a32 >> n) | (this._a48 << (16-n)) ) & 0xFFFF
+			this._a16 = (this._a48 >> n) & 0xFFFF
+			this._a32 = 0
+			this._a48 = 0
+		} else if (n >= 16) {
+			n -= 16
+			this._a00 = ( (this._a16 >> n) | (this._a32 << (16-n)) ) & 0xFFFF
+			this._a16 = ( (this._a32 >> n) | (this._a48 << (16-n)) ) & 0xFFFF
+			this._a32 = (this._a48 >> n) & 0xFFFF
+			this._a48 = 0
+		} else {
+			this._a00 = ( (this._a00 >> n) | (this._a16 << (16-n)) ) & 0xFFFF
+			this._a16 = ( (this._a16 >> n) | (this._a32 << (16-n)) ) & 0xFFFF
+			this._a32 = ( (this._a32 >> n) | (this._a48 << (16-n)) ) & 0xFFFF
+			this._a48 = (this._a48 >> n) & 0xFFFF
+		}
+
+		return this
+	}
+
+	/**
+	 * Bitwise shift left
+	 * @method shiftLeft
+	 * @param {Number} number of bits to shift
+	 * @param {Boolean} allow overflow
+	 * @return ThisExpression
+	 */
+	UINT64.prototype.shiftLeft = UINT64.prototype.shiftl = function (n, allowOverflow) {
+		n %= 64
+		if (n >= 48) {
+			this._a48 = this._a00 << (n - 48)
+			this._a32 = 0
+			this._a16 = 0
+			this._a00 = 0
+		} else if (n >= 32) {
+			n -= 32
+			this._a48 = (this._a16 << n) | (this._a00 >> (16-n))
+			this._a32 = (this._a00 << n) & 0xFFFF
+			this._a16 = 0
+			this._a00 = 0
+		} else if (n >= 16) {
+			n -= 16
+			this._a48 = (this._a32 << n) | (this._a16 >> (16-n))
+			this._a32 = ( (this._a16 << n) | (this._a00 >> (16-n)) ) & 0xFFFF
+			this._a16 = (this._a00 << n) & 0xFFFF
+			this._a00 = 0
+		} else {
+			this._a48 = (this._a48 << n) | (this._a32 >> (16-n))
+			this._a32 = ( (this._a32 << n) | (this._a16 >> (16-n)) ) & 0xFFFF
+			this._a16 = ( (this._a16 << n) | (this._a00 >> (16-n)) ) & 0xFFFF
+			this._a00 = (this._a00 << n) & 0xFFFF
+		}
+		if (!allowOverflow) {
+			this._a48 &= 0xFFFF
+		}
+
+		return this
+	}
+
+	/**
+	 * Bitwise rotate left
+	 * @method rotl
+	 * @param {Number} number of bits to rotate
+	 * @return ThisExpression
+	 */
+	UINT64.prototype.rotateLeft = UINT64.prototype.rotl = function (n) {
+		n %= 64
+		if (n == 0) return this
+		if (n >= 32) {
+			// A.B.C.D
+			// B.C.D.A rotl(16)
+			// C.D.A.B rotl(32)
+			var v = this._a00
+			this._a00 = this._a32
+			this._a32 = v
+			v = this._a48
+			this._a48 = this._a16
+			this._a16 = v
+			if (n == 32) return this
+			n -= 32
+		}
+
+		var high = (this._a48 << 16) | this._a32
+		var low = (this._a16 << 16) | this._a00
+
+		var _high = (high << n) | (low >>> (32 - n))
+		var _low = (low << n) | (high >>> (32 - n))
+
+		this._a00 = _low & 0xFFFF
+		this._a16 = _low >>> 16
+		this._a32 = _high & 0xFFFF
+		this._a48 = _high >>> 16
+
+		return this
+	}
+
+	/**
+	 * Bitwise rotate right
+	 * @method rotr
+	 * @param {Number} number of bits to rotate
+	 * @return ThisExpression
+	 */
+	UINT64.prototype.rotateRight = UINT64.prototype.rotr = function (n) {
+		n %= 64
+		if (n == 0) return this
+		if (n >= 32) {
+			// A.B.C.D
+			// D.A.B.C rotr(16)
+			// C.D.A.B rotr(32)
+			var v = this._a00
+			this._a00 = this._a32
+			this._a32 = v
+			v = this._a48
+			this._a48 = this._a16
+			this._a16 = v
+			if (n == 32) return this
+			n -= 32
+		}
+
+		var high = (this._a48 << 16) | this._a32
+		var low = (this._a16 << 16) | this._a00
+
+		var _high = (high >>> n) | (low << (32 - n))
+		var _low = (low >>> n) | (high << (32 - n))
+
+		this._a00 = _low & 0xFFFF
+		this._a16 = _low >>> 16
+		this._a32 = _high & 0xFFFF
+		this._a48 = _high >>> 16
+
+		return this
+	}
+
+	/**
+	 * Clone the current _UINT64_
+	 * @method clone
+	 * @return {Object} cloned UINT64
+	 */
+	UINT64.prototype.clone = function () {
+		return new UINT64(this._a00, this._a16, this._a32, this._a48)
+	}
+
+	if (typeof define != 'undefined' && define.amd) {
+		// AMD / RequireJS
+		define([], function () {
+			return UINT64
+		})
+	} else if (typeof module != 'undefined' && module.exports) {
+		// Node.js
+		module.exports = UINT64
+	} else {
+		// Browser
+		root['UINT64'] = UINT64
+	}
+
+})(this)
+
+},{}],13:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -829,7 +2856,8 @@ function functionBindPolyfill(context) {
   };
 }
 
-},{}],5:[function(require,module,exports){
+},{}],14:[function(require,module,exports){
+/*! ieee754. BSD-3-Clause License. Feross Aboukhadijeh <https://feross.org/opensource> */
 exports.read = function (buffer, offset, isLE, mLen, nBytes) {
   var e, m
   var eLen = (nBytes * 8) - mLen - 1
@@ -915,7 +2943,7 @@ exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
   buffer[offset + i - d] |= s * 128
 }
 
-},{}],6:[function(require,module,exports){
+},{}],15:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -944,7 +2972,7 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],7:[function(require,module,exports){
+},{}],16:[function(require,module,exports){
 /*!
  * Determine if an object is a Buffer
  *
@@ -967,15 +2995,15 @@ function isSlowBuffer (obj) {
   return typeof obj.readFloatLE === 'function' && typeof obj.slice === 'function' && isBuffer(obj.slice(0, 0))
 }
 
-},{}],8:[function(require,module,exports){
+},{}],17:[function(require,module,exports){
 var toString = {}.toString;
 
 module.exports = Array.isArray || function (arr) {
   return toString.call(arr) == '[object Array]';
 };
 
-},{}],9:[function(require,module,exports){
-(function (process){
+},{}],18:[function(require,module,exports){
+(function (process){(function (){
 'use strict';
 
 if (typeof process === 'undefined' ||
@@ -1022,8 +3050,8 @@ function nextTick(fn, arg1, arg2, arg3) {
 }
 
 
-}).call(this,require('_process'))
-},{"_process":10}],10:[function(require,module,exports){
+}).call(this)}).call(this,require('_process'))
+},{"_process":19}],19:[function(require,module,exports){
 // shim for using process in browser
 var process = module.exports = {};
 
@@ -1209,10 +3237,10 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],11:[function(require,module,exports){
+},{}],20:[function(require,module,exports){
 module.exports = require('./lib/_stream_duplex.js');
 
-},{"./lib/_stream_duplex.js":12}],12:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":21}],21:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -1344,7 +3372,7 @@ Duplex.prototype._destroy = function (err, cb) {
 
   pna.nextTick(cb, err);
 };
-},{"./_stream_readable":14,"./_stream_writable":16,"core-util-is":3,"inherits":6,"process-nextick-args":9}],13:[function(require,module,exports){
+},{"./_stream_readable":23,"./_stream_writable":25,"core-util-is":9,"inherits":15,"process-nextick-args":18}],22:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -1392,8 +3420,8 @@ function PassThrough(options) {
 PassThrough.prototype._transform = function (chunk, encoding, cb) {
   cb(null, chunk);
 };
-},{"./_stream_transform":15,"core-util-is":3,"inherits":6}],14:[function(require,module,exports){
-(function (process,global){
+},{"./_stream_transform":24,"core-util-is":9,"inherits":15}],23:[function(require,module,exports){
+(function (process,global){(function (){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -2413,8 +4441,8 @@ function indexOf(xs, x) {
   }
   return -1;
 }
-}).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./_stream_duplex":12,"./internal/streams/BufferList":17,"./internal/streams/destroy":18,"./internal/streams/stream":19,"_process":10,"core-util-is":3,"events":4,"inherits":6,"isarray":8,"process-nextick-args":9,"safe-buffer":20,"string_decoder/":21,"util":2}],15:[function(require,module,exports){
+}).call(this)}).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{"./_stream_duplex":21,"./internal/streams/BufferList":26,"./internal/streams/destroy":27,"./internal/streams/stream":28,"_process":19,"core-util-is":9,"events":13,"inherits":15,"isarray":17,"process-nextick-args":18,"safe-buffer":29,"string_decoder/":30,"util":8}],24:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -2629,8 +4657,8 @@ function done(stream, er, data) {
 
   return stream.push(null);
 }
-},{"./_stream_duplex":12,"core-util-is":3,"inherits":6}],16:[function(require,module,exports){
-(function (process,global,setImmediate){
+},{"./_stream_duplex":21,"core-util-is":9,"inherits":15}],25:[function(require,module,exports){
+(function (process,global,setImmediate){(function (){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -3318,8 +5346,8 @@ Writable.prototype._destroy = function (err, cb) {
   this.end();
   cb(err);
 };
-}).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {},require("timers").setImmediate)
-},{"./_stream_duplex":12,"./internal/streams/destroy":18,"./internal/streams/stream":19,"_process":10,"core-util-is":3,"inherits":6,"process-nextick-args":9,"safe-buffer":20,"timers":27,"util-deprecate":28}],17:[function(require,module,exports){
+}).call(this)}).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {},require("timers").setImmediate)
+},{"./_stream_duplex":21,"./internal/streams/destroy":27,"./internal/streams/stream":28,"_process":19,"core-util-is":9,"inherits":15,"process-nextick-args":18,"safe-buffer":29,"timers":36,"util-deprecate":37}],26:[function(require,module,exports){
 'use strict';
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -3399,7 +5427,7 @@ if (util && util.inspect && util.inspect.custom) {
     return this.constructor.name + ' ' + obj;
   };
 }
-},{"safe-buffer":20,"util":2}],18:[function(require,module,exports){
+},{"safe-buffer":29,"util":8}],27:[function(require,module,exports){
 'use strict';
 
 /*<replacement>*/
@@ -3474,10 +5502,10 @@ module.exports = {
   destroy: destroy,
   undestroy: undestroy
 };
-},{"process-nextick-args":9}],19:[function(require,module,exports){
+},{"process-nextick-args":18}],28:[function(require,module,exports){
 module.exports = require('events').EventEmitter;
 
-},{"events":4}],20:[function(require,module,exports){
+},{"events":13}],29:[function(require,module,exports){
 /* eslint-disable node/no-deprecated-api */
 var buffer = require('buffer')
 var Buffer = buffer.Buffer
@@ -3541,7 +5569,7 @@ SafeBuffer.allocUnsafeSlow = function (size) {
   return buffer.SlowBuffer(size)
 }
 
-},{"buffer":"buffer"}],21:[function(require,module,exports){
+},{"buffer":"buffer"}],30:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -3838,10 +5866,10 @@ function simpleWrite(buf) {
 function simpleEnd(buf) {
   return buf && buf.length ? this.write(buf) : '';
 }
-},{"safe-buffer":20}],22:[function(require,module,exports){
+},{"safe-buffer":29}],31:[function(require,module,exports){
 module.exports = require('./readable').PassThrough
 
-},{"./readable":23}],23:[function(require,module,exports){
+},{"./readable":32}],32:[function(require,module,exports){
 exports = module.exports = require('./lib/_stream_readable.js');
 exports.Stream = exports;
 exports.Readable = exports;
@@ -3850,13 +5878,13 @@ exports.Duplex = require('./lib/_stream_duplex.js');
 exports.Transform = require('./lib/_stream_transform.js');
 exports.PassThrough = require('./lib/_stream_passthrough.js');
 
-},{"./lib/_stream_duplex.js":12,"./lib/_stream_passthrough.js":13,"./lib/_stream_readable.js":14,"./lib/_stream_transform.js":15,"./lib/_stream_writable.js":16}],24:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":21,"./lib/_stream_passthrough.js":22,"./lib/_stream_readable.js":23,"./lib/_stream_transform.js":24,"./lib/_stream_writable.js":25}],33:[function(require,module,exports){
 module.exports = require('./readable').Transform
 
-},{"./readable":23}],25:[function(require,module,exports){
+},{"./readable":32}],34:[function(require,module,exports){
 module.exports = require('./lib/_stream_writable.js');
 
-},{"./lib/_stream_writable.js":16}],26:[function(require,module,exports){
+},{"./lib/_stream_writable.js":25}],35:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -3985,8 +6013,8 @@ Stream.prototype.pipe = function(dest, options) {
   return dest;
 };
 
-},{"events":4,"inherits":6,"readable-stream/duplex.js":11,"readable-stream/passthrough.js":22,"readable-stream/readable.js":23,"readable-stream/transform.js":24,"readable-stream/writable.js":25}],27:[function(require,module,exports){
-(function (setImmediate,clearImmediate){
+},{"events":13,"inherits":15,"readable-stream/duplex.js":20,"readable-stream/passthrough.js":31,"readable-stream/readable.js":32,"readable-stream/transform.js":33,"readable-stream/writable.js":34}],36:[function(require,module,exports){
+(function (setImmediate,clearImmediate){(function (){
 var nextTick = require('process/browser.js').nextTick;
 var apply = Function.prototype.apply;
 var slice = Array.prototype.slice;
@@ -4063,9 +6091,9 @@ exports.setImmediate = typeof setImmediate === "function" ? setImmediate : funct
 exports.clearImmediate = typeof clearImmediate === "function" ? clearImmediate : function(id) {
   delete immediateIds[id];
 };
-}).call(this,require("timers").setImmediate,require("timers").clearImmediate)
-},{"process/browser.js":10,"timers":27}],28:[function(require,module,exports){
-(function (global){
+}).call(this)}).call(this,require("timers").setImmediate,require("timers").clearImmediate)
+},{"process/browser.js":19,"timers":36}],37:[function(require,module,exports){
+(function (global){(function (){
 
 /**
  * Module exports.
@@ -4134,8 +6162,8 @@ function config (name) {
   return String(val).toLowerCase() === 'true';
 }
 
-}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],29:[function(require,module,exports){
+}).call(this)}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{}],38:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -4160,15 +6188,15 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],30:[function(require,module,exports){
+},{}],39:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],31:[function(require,module,exports){
-(function (process,global){
+},{}],40:[function(require,module,exports){
+(function (process,global){(function (){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -4756,2038 +6784,9 @@ function hasOwnProperty(obj, prop) {
   return Object.prototype.hasOwnProperty.call(obj, prop);
 }
 
-}).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":30,"_process":10,"inherits":29}],32:[function(require,module,exports){
-/**
-	Javascript version of the key LZ4 C functions
- */
-var uint32 = require('cuint').UINT32
-
-if (!Math.imul) Math.imul = function imul(a, b) {
-	var ah = a >>> 16;
-	var al = a & 0xffff;
-	var bh = b >>> 16;
-	var bl = b & 0xffff;
-	return (al*bl + ((ah*bl + al*bh) << 16))|0;
-};
-
-/**
- * Decode a block. Assumptions: input contains all sequences of a 
- * chunk, output is large enough to receive the decoded data.
- * If the output buffer is too small, an error will be thrown.
- * If the returned value is negative, an error occured at the returned offset.
- *
- * @param input {Buffer} input data
- * @param output {Buffer} output data
- * @return {Number} number of decoded bytes
- * @private
- */
-exports.uncompress = function (input, output, sIdx, eIdx) {
-	sIdx = sIdx || 0
-	eIdx = eIdx || (input.length - sIdx)
-	// Process each sequence in the incoming data
-	for (var i = sIdx, n = eIdx, j = 0; i < n;) {
-		var token = input[i++]
-
-		// Literals
-		var literals_length = (token >> 4)
-		if (literals_length > 0) {
-			// length of literals
-			var l = literals_length + 240
-			while (l === 255) {
-				l = input[i++]
-				literals_length += l
-			}
-
-			// Copy the literals
-			var end = i + literals_length
-			while (i < end) output[j++] = input[i++]
-
-			// End of buffer?
-			if (i === n) return j
-		}
-
-		// Match copy
-		// 2 bytes offset (little endian)
-		var offset = input[i++] | (input[i++] << 8)
-
-		// 0 is an invalid offset value
-		if (offset === 0 || offset > j) return -(i-2)
-
-		// length of match copy
-		var match_length = (token & 0xf)
-		var l = match_length + 240
-		while (l === 255) {
-			l = input[i++]
-			match_length += l
-		}
-
-		// Copy the match
-		var pos = j - offset // position of the match copy in the current output
-		var end = j + match_length + 4 // minmatch = 4
-		while (j < end) output[j++] = output[pos++]
-	}
-
-	return j
-}
-
-var
-	maxInputSize	= 0x7E000000
-,	minMatch		= 4
-// uint32() optimization
-,	hashLog			= 16
-,	hashShift		= (minMatch * 8) - hashLog
-,	hashSize		= 1 << hashLog
-
-,	copyLength		= 8
-,	lastLiterals	= 5
-,	mfLimit			= copyLength + minMatch
-,	skipStrength	= 6
-
-,	mlBits  		= 4
-,	mlMask  		= (1 << mlBits) - 1
-,	runBits 		= 8 - mlBits
-,	runMask 		= (1 << runBits) - 1
-
-,	hasher 			= 2654435761
-
-// CompressBound returns the maximum length of a lz4 block, given it's uncompressed length
-exports.compressBound = function (isize) {
-	return isize > maxInputSize
-		? 0
-		: (isize + (isize/255) + 16) | 0
-}
-
-exports.compress = function (src, dst, sIdx, eIdx) {
-	// V8 optimization: non sparse array with integers
-	var hashTable = new Array(hashSize)
-	for (var i = 0; i < hashSize; i++) {
-		hashTable[i] = 0
-	}
-	return compressBlock(src, dst, 0, hashTable, sIdx || 0, eIdx || dst.length)
-}
-
-exports.compressHC = exports.compress
-
-exports.compressDependent = compressBlock
-
-function compressBlock (src, dst, pos, hashTable, sIdx, eIdx) {
-	var dpos = sIdx
-	var dlen = eIdx - sIdx
-	var anchor = 0
-
-	if (src.length >= maxInputSize) throw new Error("input too large")
-
-	// Minimum of input bytes for compression (LZ4 specs)
-	if (src.length > mfLimit) {
-		var n = exports.compressBound(src.length)
-		if ( dlen < n ) throw Error("output too small: " + dlen + " < " + n)
-
-		var 
-			step  = 1
-		,	findMatchAttempts = (1 << skipStrength) + 3
-		// Keep last few bytes incompressible (LZ4 specs):
-		// last 5 bytes must be literals
-		,	srcLength = src.length - mfLimit
-
-		while (pos + minMatch < srcLength) {
-			// Find a match
-			// min match of 4 bytes aka sequence
-			var sequenceLowBits = src[pos+1]<<8 | src[pos]
-			var sequenceHighBits = src[pos+3]<<8 | src[pos+2]
-			// compute hash for the current sequence
-			var hash = Math.imul(sequenceLowBits | (sequenceHighBits << 16), hasher) >>> hashShift
-			// get the position of the sequence matching the hash
-			// NB. since 2 different sequences may have the same hash
-			// it is double-checked below
-			// do -1 to distinguish between initialized and uninitialized values
-			var ref = hashTable[hash] - 1
-			// save position of current sequence in hash table
-			hashTable[hash] = pos + 1
-
-			// first reference or within 64k limit or current sequence !== hashed one: no match
-			if ( ref < 0 ||
-				((pos - ref) >>> 16) > 0 ||
-				(
-					((src[ref+3]<<8 | src[ref+2]) != sequenceHighBits) ||
-					((src[ref+1]<<8 | src[ref]) != sequenceLowBits )
-				)
-			) {
-				// increase step if nothing found within limit
-				step = findMatchAttempts++ >> skipStrength
-				pos += step
-				continue
-			}
-
-			findMatchAttempts = (1 << skipStrength) + 3
-
-			// got a match
-			var literals_length = pos - anchor
-			var offset = pos - ref
-
-			// minMatch already verified
-			pos += minMatch
-			ref += minMatch
-
-			// move to the end of the match (>=minMatch)
-			var match_length = pos
-			while (pos < srcLength && src[pos] == src[ref]) {
-				pos++
-				ref++
-			}
-
-			// match length
-			match_length = pos - match_length
-
-			// token
-			var token = match_length < mlMask ? match_length : mlMask
-
-			// encode literals length
-			if (literals_length >= runMask) {
-				// add match length to the token
-				dst[dpos++] = (runMask << mlBits) + token
-				for (var len = literals_length - runMask; len > 254; len -= 255) {
-					dst[dpos++] = 255
-				}
-				dst[dpos++] = len
-			} else {
-				// add match length to the token
-				dst[dpos++] = (literals_length << mlBits) + token
-			}
-
-			// write literals
-			for (var i = 0; i < literals_length; i++) {
-				dst[dpos++] = src[anchor+i]
-			}
-
-			// encode offset
-			dst[dpos++] = offset
-			dst[dpos++] = (offset >> 8)
-
-			// encode match length
-			if (match_length >= mlMask) {
-				match_length -= mlMask
-				while (match_length >= 255) {
-					match_length -= 255
-					dst[dpos++] = 255
-				}
-
-				dst[dpos++] = match_length
-			}
-
-			anchor = pos
-		}
-	}
-
-	// cannot compress input
-	if (anchor == 0) return 0
-
-	// Write last literals
-	// encode literals length
-	literals_length = src.length - anchor
-	if (literals_length >= runMask) {
-		// add match length to the token
-		dst[dpos++] = (runMask << mlBits)
-		for (var ln = literals_length - runMask; ln > 254; ln -= 255) {
-			dst[dpos++] = 255
-		}
-		dst[dpos++] = ln
-	} else {
-		// add match length to the token
-		dst[dpos++] = (literals_length << mlBits)
-	}
-
-	// write literals
-	pos = anchor
-	while (pos < src.length) {
-		dst[dpos++] = src[pos++]
-	}
-
-	return dpos
-}
-
-},{"cuint":38}],33:[function(require,module,exports){
-(function (Buffer){
-var Decoder = require('./decoder_stream')
-
-/**
-	Decode an LZ4 stream
- */
-function LZ4_uncompress (input, options) {
-	var output = []
-	var decoder = new Decoder(options)
-
-	decoder.on('data', function (chunk) {
-		output.push(chunk)
-	})
-
-	decoder.end(input)
-
-	return Buffer.concat(output)
-}
-
-exports.LZ4_uncompress = LZ4_uncompress
-}).call(this,require("buffer").Buffer)
-},{"./decoder_stream":34,"buffer":"buffer"}],34:[function(require,module,exports){
-(function (Buffer){
-var Transform = require('stream').Transform
-var inherits = require('util').inherits
-
-var lz4_static = require('./static')
-var utils = lz4_static.utils
-var lz4_binding = utils.bindings
-var lz4_jsbinding = require('./binding')
-
-var STATES = lz4_static.STATES
-var SIZES = lz4_static.SIZES
-
-function Decoder (options) {
-	if ( !(this instanceof Decoder) )
-		return new Decoder(options)
-	
-	Transform.call(this, options)
-	// Options
-	this.options = options || {}
-
-	this.binding = this.options.useJS ? lz4_jsbinding : lz4_binding
-
-	// Encoded data being processed
-	this.buffer = null
-	// Current position within the data
-	this.pos = 0
-	this.descriptor = null
-
-	// Current state of the parsing
-	this.state = STATES.MAGIC
-
-	this.notEnoughData = false
-	this.descriptorStart = 0
-	this.streamSize = null
-	this.dictId = null
-	this.currentStreamChecksum = null
-	this.dataBlockSize = 0
-	this.skippableSize = 0
-}
-inherits(Decoder, Transform)
-
-Decoder.prototype._transform = function (data, encoding, done) {
-	// Handle skippable data
-	if (this.skippableSize > 0) {
-		this.skippableSize -= data.length
-		if (this.skippableSize > 0) {
-			// More to skip
-			done()
-			return
-		}
-
-		data = data.slice(-this.skippableSize)
-		this.skippableSize = 0
-		this.state = STATES.MAGIC
-	}
-	// Buffer the incoming data
-	this.buffer = this.buffer
-					? Buffer.concat( [ this.buffer, data ], this.buffer.length + data.length )
-					: data
-
-	this._main(done)
-}
-
-Decoder.prototype.emit_Error = function (msg) {
-	this.emit( 'error', new Error(msg + ' @' + this.pos) )
-}
-
-Decoder.prototype.check_Size = function (n) {
-	var delta = this.buffer.length - this.pos
-	if (delta <= 0 || delta < n) {
-		if (this.notEnoughData) this.emit_Error( 'Unexpected end of LZ4 stream' )
-		return true
-	}
-
-	this.pos += n
-	return false
-}
-
-Decoder.prototype.read_MagicNumber = function () {
-	var pos = this.pos
-	if ( this.check_Size(SIZES.MAGIC) ) return true
-
-	var magic = utils.readUInt32LE(this.buffer, pos)
-
-	// Skippable chunk
-	if ( (magic & 0xFFFFFFF0) === lz4_static.MAGICNUMBER_SKIPPABLE ) {
-		this.state = STATES.SKIP_SIZE
-		return
-	}
-
-	// LZ4 stream
-	if ( magic !== lz4_static.MAGICNUMBER ) {
-		this.pos = pos
-		this.emit_Error( 'Invalid magic number: ' + magic.toString(16).toUpperCase() )
-		return true
-	}
-
-	this.state = STATES.DESCRIPTOR
-}
-
-Decoder.prototype.read_SkippableSize = function () {
-	var pos = this.pos
-	if ( this.check_Size(SIZES.SKIP_SIZE) ) return true
-	this.state = STATES.SKIP_DATA
-	this.skippableSize = utils.readUInt32LE(this.buffer, pos)
-}
-
-Decoder.prototype.read_Descriptor = function () {
-	// Flags
-	var pos = this.pos
-	if ( this.check_Size(SIZES.DESCRIPTOR) ) return true
-
-	this.descriptorStart = pos
-
-	// version
-	var descriptor_flg = this.buffer[pos]
-	var version = descriptor_flg >> 6
-	if ( version !== lz4_static.VERSION ) {
-		this.pos = pos
-		this.emit_Error( 'Invalid version: ' + version + ' != ' + lz4_static.VERSION )
-		return true
-	}
-
-	// flags
-	// reserved bit should not be set
-	if ( (descriptor_flg >> 1) & 0x1 ) {
-		this.pos = pos
-		this.emit_Error('Reserved bit set')
-		return true
-	}
-
-	var blockMaxSizeIndex = (this.buffer[pos+1] >> 4) & 0x7
-	var blockMaxSize = lz4_static.blockMaxSizes[ blockMaxSizeIndex ]
-	if ( blockMaxSize === null ) {
-		this.pos = pos
-		this.emit_Error( 'Invalid block max size: ' + blockMaxSizeIndex )
-		return true
-	}
-
-	this.descriptor = {
-		blockIndependence: Boolean( (descriptor_flg >> 5) & 0x1 )
-	,	blockChecksum: Boolean( (descriptor_flg >> 4) & 0x1 )
-	,	blockMaxSize: blockMaxSize
-	,	streamSize: Boolean( (descriptor_flg >> 3) & 0x1 )
-	,	streamChecksum: Boolean( (descriptor_flg >> 2) & 0x1 )
-	,	dict: Boolean( descriptor_flg & 0x1 )
-	,	dictId: 0
-	}
-
-	this.state = STATES.SIZE
-}
-
-Decoder.prototype.read_Size = function () {
-	if (this.descriptor.streamSize) {
-		var pos = this.pos
-		if ( this.check_Size(SIZES.SIZE) ) return true
-		//TODO max size is unsigned 64 bits
-		this.streamSize = this.buffer.slice(pos, pos + 8)
-	}
-
-	this.state = STATES.DICTID
-}
-
-Decoder.prototype.read_DictId = function () {
-	if (this.descriptor.dictId) {
-		var pos = this.pos
-		if ( this.check_Size(SIZES.DICTID) ) return true
-		this.dictId = utils.readUInt32LE(this.buffer, pos)
-	}
-
-	this.state = STATES.DESCRIPTOR_CHECKSUM
-}
-
-Decoder.prototype.read_DescriptorChecksum = function () {
-	var pos = this.pos
-	if ( this.check_Size(SIZES.DESCRIPTOR_CHECKSUM) ) return true
-
-	var checksum = this.buffer[pos]
-	var currentChecksum = utils.descriptorChecksum( this.buffer.slice(this.descriptorStart, pos) )
-	if (currentChecksum !== checksum) {
-		this.pos = pos
-		this.emit_Error( 'Invalid stream descriptor checksum' )
-		return true
-	}
-
-	this.state = STATES.DATABLOCK_SIZE
-}
-
-Decoder.prototype.read_DataBlockSize = function () {
-	var pos = this.pos
-	if ( this.check_Size(SIZES.DATABLOCK_SIZE) ) return true
-	var datablock_size = utils.readUInt32LE(this.buffer, pos)
-	// Uncompressed
-	if ( datablock_size === lz4_static.EOS ) {
-		this.state = STATES.EOS
-		return
-	}
-
-// if (datablock_size > this.descriptor.blockMaxSize) {
-// 	this.emit_Error( 'ASSERTION: invalid datablock_size: ' + datablock_size.toString(16).toUpperCase() + ' > ' + this.descriptor.blockMaxSize.toString(16).toUpperCase() )
-// }
-	this.dataBlockSize = datablock_size
-
-	this.state = STATES.DATABLOCK_DATA
-}
-
-Decoder.prototype.read_DataBlockData = function () {
-	var pos = this.pos
-	var datablock_size = this.dataBlockSize
-	if ( datablock_size & 0x80000000 ) {
-		// Uncompressed size
-		datablock_size = datablock_size & 0x7FFFFFFF
-	}
-	if ( this.check_Size(datablock_size) ) return true
-
-	this.dataBlock = this.buffer.slice(pos, pos + datablock_size)
-
-	this.state = STATES.DATABLOCK_CHECKSUM
-}
-
-Decoder.prototype.read_DataBlockChecksum = function () {
-	var pos = this.pos
-	if (this.descriptor.blockChecksum) {
-		if ( this.check_Size(SIZES.DATABLOCK_CHECKSUM) ) return true
-		var checksum = utils.readUInt32LE(this.buffer, this.pos-4)
-		var currentChecksum = utils.blockChecksum( this.dataBlock )
-		if (currentChecksum !== checksum) {
-			this.pos = pos
-			this.emit_Error( 'Invalid block checksum' )
-			return true
-		}
-	}
-
-	this.state = STATES.DATABLOCK_UNCOMPRESS
-}
-
-Decoder.prototype.uncompress_DataBlock = function () {
-	var uncompressed
-	// uncompressed?
-	if ( this.dataBlockSize & 0x80000000 ) {
-		uncompressed = this.dataBlock
-	} else {
-		uncompressed = Buffer.alloc(this.descriptor.blockMaxSize)
-		var decodedSize = this.binding.uncompress( this.dataBlock, uncompressed )
-		if (decodedSize < 0) {
-			this.emit_Error( 'Invalid data block: ' + (-decodedSize) )
-			return true
-		}
-		if ( decodedSize < this.descriptor.blockMaxSize )
-			uncompressed = uncompressed.slice(0, decodedSize)
-	}
-	this.dataBlock = null
-	this.push( uncompressed )
-
-	// Stream checksum
-	if (this.descriptor.streamChecksum) {
-		this.currentStreamChecksum = utils.streamChecksum(uncompressed, this.currentStreamChecksum)
-	}
-
-	this.state = STATES.DATABLOCK_SIZE
-}
-
-Decoder.prototype.read_EOS = function () {
-	if (this.descriptor.streamChecksum) {
-		var pos = this.pos
-		if ( this.check_Size(SIZES.EOS) ) return true
-		var checksum = utils.readUInt32LE(this.buffer, pos)
-		if ( checksum !== utils.streamChecksum(null, this.currentStreamChecksum) ) {
-			this.pos = pos
-			this.emit_Error( 'Invalid stream checksum: ' + checksum.toString(16).toUpperCase() )
-			return true
-		}
-	}
-
-	this.state = STATES.MAGIC
-}
-
-Decoder.prototype._flush = function (done) {
-	// Error on missing data as no more will be coming
-	this.notEnoughData = true
-	this._main(done)
-}
-
-Decoder.prototype._main = function (done) {
-	var pos = this.pos
-	var notEnoughData
-
-	while ( !notEnoughData && this.pos < this.buffer.length ) {
-		if (this.state === STATES.MAGIC)
-			notEnoughData = this.read_MagicNumber()
-
-		if (this.state === STATES.SKIP_SIZE)
-			notEnoughData = this.read_SkippableSize()
-
-		if (this.state === STATES.DESCRIPTOR)
-			notEnoughData = this.read_Descriptor()
-
-		if (this.state === STATES.SIZE)
-			notEnoughData = this.read_Size()
-
-		if (this.state === STATES.DICTID)
-			notEnoughData = this.read_DictId()
-
-		if (this.state === STATES.DESCRIPTOR_CHECKSUM)
-			notEnoughData = this.read_DescriptorChecksum()
-
-		if (this.state === STATES.DATABLOCK_SIZE)
-			notEnoughData = this.read_DataBlockSize()
-
-		if (this.state === STATES.DATABLOCK_DATA)
-			notEnoughData = this.read_DataBlockData()
-
-		if (this.state === STATES.DATABLOCK_CHECKSUM)
-			notEnoughData = this.read_DataBlockChecksum()
-
-		if (this.state === STATES.DATABLOCK_UNCOMPRESS)
-			notEnoughData = this.uncompress_DataBlock()
-
-		if (this.state === STATES.EOS)
-			notEnoughData = this.read_EOS()
-	}
-
-	if (this.pos > pos) {
-		this.buffer = this.buffer.slice(this.pos)
-		this.pos = 0
-	}
-
-	done()
-}
-
-module.exports = Decoder
-
-}).call(this,require("buffer").Buffer)
-},{"./binding":32,"./static":37,"buffer":"buffer","stream":26,"util":31}],35:[function(require,module,exports){
-(function (Buffer){
-var Encoder = require('./encoder_stream')
-
-/**
-	Encode an LZ4 stream
- */
-function LZ4_compress (input, options) {
-	var output = []
-	var encoder = new Encoder(options)
-
-	encoder.on('data', function (chunk) {
-		output.push(chunk)
-	})
-
-	encoder.end(input)
-
-	return Buffer.concat(output)
-}
-
-exports.LZ4_compress = LZ4_compress
-
-}).call(this,require("buffer").Buffer)
-},{"./encoder_stream":36,"buffer":"buffer"}],36:[function(require,module,exports){
-(function (Buffer){
-var Transform = require('stream').Transform
-var inherits = require('util').inherits
-
-var lz4_static = require('./static')
-var utils = lz4_static.utils
-var lz4_binding = utils.bindings
-var lz4_jsbinding = require('./binding')
-
-var STATES = lz4_static.STATES
-var SIZES = lz4_static.SIZES
-
-var defaultOptions = {
-	blockIndependence: true
-,	blockChecksum: false
-,	blockMaxSize: 4<<20
-,	streamSize: false
-,	streamChecksum: true
-,	dict: false
-,	dictId: 0
-,	highCompression: false
-}
-
-function Encoder (options) {
-	if ( !(this instanceof Encoder) )
-		return new Encoder(options)
-	
-	Transform.call(this, options)
-
-	// Set the options
-	var o = options || defaultOptions
-	if (o !== defaultOptions)
-		Object.keys(defaultOptions).forEach(function (p) {
-			if ( !o.hasOwnProperty(p) ) o[p] = defaultOptions[p]
-		})
-
-	this.options = o
-
-	this.binding = this.options.useJS ? lz4_jsbinding : lz4_binding
-	this.compress = o.highCompression ? this.binding.compressHC : this.binding.compress
-
-	// Build the stream descriptor from the options
-	// flags
-	var descriptor_flg = 0
-	descriptor_flg = descriptor_flg | (lz4_static.VERSION << 6)			// Version
-	descriptor_flg = descriptor_flg | ((o.blockIndependence & 1) << 5)	// Block independence
-	descriptor_flg = descriptor_flg | ((o.blockChecksum & 1) << 4)		// Block checksum
-	descriptor_flg = descriptor_flg | ((o.streamSize & 1) << 3)			// Stream size
-	descriptor_flg = descriptor_flg | ((o.streamChecksum & 1) << 2)		// Stream checksum
-																		// Reserved bit
-	descriptor_flg = descriptor_flg | (o.dict & 1)						// Preset dictionary
-
-	// block maximum size
-	var descriptor_bd = lz4_static.blockMaxSizes.indexOf(o.blockMaxSize)
-	if (descriptor_bd < 0)
-		throw new Error('Invalid blockMaxSize: ' + o.blockMaxSize)
-
-	this.descriptor = { flg: descriptor_flg, bd: (descriptor_bd & 0x7) << 4 }
-
-	// Data being processed
-	this.buffer = []
-	this.length = 0
-
-	this.first = true
-	this.checksum = null
-}
-inherits(Encoder, Transform)
-
-// Header = magic number + stream descriptor
-Encoder.prototype.headerSize = function () {
-	var streamSizeSize = this.options.streamSize ? SIZES.DESCRIPTOR : 0
-	var dictSize = this.options.dict ? SIZES.DICTID : 0
-
-	return SIZES.MAGIC + 1 + 1 + streamSizeSize + dictSize + 1
-}
-
-Encoder.prototype.header = function () {
-	var headerSize = this.headerSize()
-	var output = Buffer.alloc(headerSize)
-
-	this.state = STATES.MAGIC
-	output.writeInt32LE(lz4_static.MAGICNUMBER, 0)
-
-	this.state = STATES.DESCRIPTOR
-	var descriptor = output.slice(SIZES.MAGIC, output.length - 1)
-
-	// Update the stream descriptor
-	descriptor.writeUInt8(this.descriptor.flg, 0)
-	descriptor.writeUInt8(this.descriptor.bd, 1)
-
-	var pos = 2
-	this.state = STATES.SIZE
-	if (this.options.streamSize) {
-		//TODO only 32bits size supported
-		descriptor.writeInt32LE(0, pos)
-		descriptor.writeInt32LE(this.size, pos + 4)
-		pos += SIZES.SIZE
-	}
-	this.state = STATES.DICTID
-	if (this.options.dict) {
-		descriptor.writeInt32LE(this.dictId, pos)
-		pos += SIZES.DICTID
-	}
-
-	this.state = STATES.DESCRIPTOR_CHECKSUM
-	output.writeUInt8(
-	  utils.descriptorChecksum( descriptor )
-	, SIZES.MAGIC + pos
-	)
-
-	return output
-}
-
-Encoder.prototype.update_Checksum = function (data) {
-	// Calculate the stream checksum
-	this.state = STATES.CHECKSUM_UPDATE
-	if (this.options.streamChecksum) {
-		this.checksum = utils.streamChecksum(data, this.checksum)
-	}
-}
-
-Encoder.prototype.compress_DataBlock = function (data) {
-	this.state = STATES.DATABLOCK_COMPRESS
-	var dbChecksumSize = this.options.blockChecksum ? SIZES.DATABLOCK_CHECKSUM : 0
-	var maxBufSize = this.binding.compressBound(data.length)
-	var buf = Buffer.alloc( SIZES.DATABLOCK_SIZE + maxBufSize + dbChecksumSize )
-	var compressed = buf.slice(SIZES.DATABLOCK_SIZE, SIZES.DATABLOCK_SIZE + maxBufSize)
-	var compressedSize = this.compress(data, compressed)
-
-	// Set the block size
-	this.state = STATES.DATABLOCK_SIZE
-	// Block size shall never be larger than blockMaxSize
-	// console.log("blockMaxSize", this.options.blockMaxSize, "compressedSize", compressedSize)
-	if (compressedSize > 0 && compressedSize <= this.options.blockMaxSize) {
-		// highest bit is 0 (compressed data)
-		buf.writeUInt32LE(compressedSize, 0)
-		buf = buf.slice(0, SIZES.DATABLOCK_SIZE + compressedSize + dbChecksumSize)
-	} else {
-		// Cannot compress the data, leave it as is
-		// highest bit is 1 (uncompressed data)
-		buf.writeInt32LE( 0x80000000 | data.length, 0)
-		buf = buf.slice(0, SIZES.DATABLOCK_SIZE + data.length + dbChecksumSize)
-		data.copy(buf, SIZES.DATABLOCK_SIZE);
-	}
-
-	// Set the block checksum
-	this.state = STATES.DATABLOCK_CHECKSUM
-	if (this.options.blockChecksum) {
-		// xxHash checksum on undecoded data with a seed of 0
-		var checksum = buf.slice(-dbChecksumSize)
-		checksum.writeInt32LE( utils.blockChecksum(compressed), 0 )
-	}
-
-	// Update the stream checksum
-	this.update_Checksum(data)
-
-	this.size += data.length
-
-	return buf
-}
-
-Encoder.prototype._transform = function (data, encoding, done) {
-	if (data) {
-		// Buffer the incoming data
-		this.buffer.push(data)
-		this.length += data.length
-	}
-
-	// Stream header
-	if (this.first) {
-		this.push( this.header() )
-		this.first = false
-	}
-
-	var blockMaxSize = this.options.blockMaxSize
-	// Not enough data for a block
-	if ( this.length < blockMaxSize ) return done()
-
-	// Build the data to be compressed
-	var buf = Buffer.concat(this.buffer, this.length)
-
-	for (var j = 0, i = buf.length; i >= blockMaxSize; i -= blockMaxSize, j += blockMaxSize) {
-		// Compress the block
-		this.push( this.compress_DataBlock( buf.slice(j, j + blockMaxSize) ) )
-	}
-
-	// Set the remaining data
-	if (i > 0) {
-		this.buffer = [ buf.slice(j) ]
-		this.length = this.buffer[0].length
-	} else {
-		this.buffer = []
-		this.length = 0
-	}
-
-	done()
-}
-
-Encoder.prototype._flush = function (done) {
-	if (this.first) {
-		this.push( this.header() )
-		this.first = false
-	}
-
-	if (this.length > 0) {
-		var buf = Buffer.concat(this.buffer, this.length)
-		this.buffer = []
-		this.length = 0
-		var cc = this.compress_DataBlock(buf)
-		this.push( cc )
-	}
-
-	if (this.options.streamChecksum) {
-		this.state = STATES.CHECKSUM
-		var eos = Buffer.alloc(SIZES.EOS + SIZES.CHECKSUM)
-		eos.writeUInt32LE( utils.streamChecksum(null, this.checksum), SIZES.EOS )
-	} else {
-		var eos = Buffer.alloc(SIZES.EOS)
-	}
-
-	this.state = STATES.EOS
-	eos.writeInt32LE(lz4_static.EOS, 0)
-	this.push(eos)
-
-	done()
-}
-
-module.exports = Encoder
-
-}).call(this,require("buffer").Buffer)
-},{"./binding":32,"./static":37,"buffer":"buffer","stream":26,"util":31}],37:[function(require,module,exports){
-(function (Buffer){
-/**
- * LZ4 based compression and decompression
- * Copyright (c) 2014 Pierre Curto
- * MIT Licensed
- */
-
-// LZ4 stream constants
-exports.MAGICNUMBER = 0x184D2204
-exports.MAGICNUMBER_BUFFER = Buffer.alloc(4)
-exports.MAGICNUMBER_BUFFER.writeUInt32LE(exports.MAGICNUMBER, 0)
-
-exports.EOS = 0
-exports.EOS_BUFFER = Buffer.alloc(4)
-exports.EOS_BUFFER.writeUInt32LE(exports.EOS, 0)
-
-exports.VERSION = 1
-
-exports.MAGICNUMBER_SKIPPABLE = 0x184D2A50
-
-// n/a, n/a, n/a, n/a, 64KB, 256KB, 1MB, 4MB
-exports.blockMaxSizes = [ null, null, null, null, 64<<10, 256<<10, 1<<20, 4<<20 ]
-
-// Compressed file extension
-exports.extension = '.lz4'
-
-// Internal stream states
-exports.STATES = {
-// Compressed stream
-	MAGIC: 0
-,	DESCRIPTOR: 1
-,	SIZE: 2
-,	DICTID: 3
-,	DESCRIPTOR_CHECKSUM: 4
-,	DATABLOCK_SIZE: 5
-,	DATABLOCK_DATA: 6
-,	DATABLOCK_CHECKSUM: 7
-,	DATABLOCK_UNCOMPRESS: 8
-,	DATABLOCK_COMPRESS: 9
-,	CHECKSUM: 10
-,	CHECKSUM_UPDATE: 11
-,	EOS: 90
-// Skippable chunk
-,	SKIP_SIZE: 101
-,	SKIP_DATA: 102
-}
-
-exports.SIZES = {
-	MAGIC: 4
-,	DESCRIPTOR: 2
-,	SIZE: 8
-,	DICTID: 4
-,	DESCRIPTOR_CHECKSUM: 1
-,	DATABLOCK_SIZE: 4
-,	DATABLOCK_CHECKSUM: 4
-,	CHECKSUM: 4
-,	EOS: 4
-,	SKIP_SIZE: 4
-}
-
-exports.utils = require('./utils')
-
-}).call(this,require("buffer").Buffer)
-},{"./utils":"./utils","buffer":"buffer"}],38:[function(require,module,exports){
-exports.UINT32 = require('./lib/uint32')
-exports.UINT64 = require('./lib/uint64')
-},{"./lib/uint32":39,"./lib/uint64":40}],39:[function(require,module,exports){
-/**
-	C-like unsigned 32 bits integers in Javascript
-	Copyright (C) 2013, Pierre Curto
-	MIT license
- */
-;(function (root) {
-
-	// Local cache for typical radices
-	var radixPowerCache = {
-		36: UINT32( Math.pow(36, 5) )
-	,	16: UINT32( Math.pow(16, 7) )
-	,	10: UINT32( Math.pow(10, 9) )
-	,	2:  UINT32( Math.pow(2, 30) )
-	}
-	var radixCache = {
-		36: UINT32(36)
-	,	16: UINT32(16)
-	,	10: UINT32(10)
-	,	2:  UINT32(2)
-	}
-
-	/**
-	 *	Represents an unsigned 32 bits integer
-	 * @constructor
-	 * @param {Number|String|Number} low bits     | integer as a string 		 | integer as a number
-	 * @param {Number|Number|Undefined} high bits | radix (optional, default=10)
-	 * @return 
-	 */
-	function UINT32 (l, h) {
-		if ( !(this instanceof UINT32) )
-			return new UINT32(l, h)
-
-		this._low = 0
-		this._high = 0
-		this.remainder = null
-		if (typeof h == 'undefined')
-			return fromNumber.call(this, l)
-
-		if (typeof l == 'string')
-			return fromString.call(this, l, h)
-
-		fromBits.call(this, l, h)
-	}
-
-	/**
-	 * Set the current _UINT32_ object with its low and high bits
-	 * @method fromBits
-	 * @param {Number} low bits
-	 * @param {Number} high bits
-	 * @return ThisExpression
-	 */
-	function fromBits (l, h) {
-		this._low = l | 0
-		this._high = h | 0
-
-		return this
-	}
-	UINT32.prototype.fromBits = fromBits
-
-	/**
-	 * Set the current _UINT32_ object from a number
-	 * @method fromNumber
-	 * @param {Number} number
-	 * @return ThisExpression
-	 */
-	function fromNumber (value) {
-		this._low = value & 0xFFFF
-		this._high = value >>> 16
-
-		return this
-	}
-	UINT32.prototype.fromNumber = fromNumber
-
-	/**
-	 * Set the current _UINT32_ object from a string
-	 * @method fromString
-	 * @param {String} integer as a string
-	 * @param {Number} radix (optional, default=10)
-	 * @return ThisExpression
-	 */
-	function fromString (s, radix) {
-		var value = parseInt(s, radix || 10)
-
-		this._low = value & 0xFFFF
-		this._high = value >>> 16
-
-		return this
-	}
-	UINT32.prototype.fromString = fromString
-
-	/**
-	 * Convert this _UINT32_ to a number
-	 * @method toNumber
-	 * @return {Number} the converted UINT32
-	 */
-	UINT32.prototype.toNumber = function () {
-		return (this._high * 65536) + this._low
-	}
-
-	/**
-	 * Convert this _UINT32_ to a string
-	 * @method toString
-	 * @param {Number} radix (optional, default=10)
-	 * @return {String} the converted UINT32
-	 */
-	UINT32.prototype.toString = function (radix) {
-		return this.toNumber().toString(radix || 10)
-	}
-
-	/**
-	 * Add two _UINT32_. The current _UINT32_ stores the result
-	 * @method add
-	 * @param {Object} other UINT32
-	 * @return ThisExpression
-	 */
-	UINT32.prototype.add = function (other) {
-		var a00 = this._low + other._low
-		var a16 = a00 >>> 16
-
-		a16 += this._high + other._high
-
-		this._low = a00 & 0xFFFF
-		this._high = a16 & 0xFFFF
-
-		return this
-	}
-
-	/**
-	 * Subtract two _UINT32_. The current _UINT32_ stores the result
-	 * @method subtract
-	 * @param {Object} other UINT32
-	 * @return ThisExpression
-	 */
-	UINT32.prototype.subtract = function (other) {
-		//TODO inline
-		return this.add( other.clone().negate() )
-	}
-
-	/**
-	 * Multiply two _UINT32_. The current _UINT32_ stores the result
-	 * @method multiply
-	 * @param {Object} other UINT32
-	 * @return ThisExpression
-	 */
-	UINT32.prototype.multiply = function (other) {
-		/*
-			a = a00 + a16
-			b = b00 + b16
-			a*b = (a00 + a16)(b00 + b16)
-				= a00b00 + a00b16 + a16b00 + a16b16
-
-			a16b16 overflows the 32bits
-		 */
-		var a16 = this._high
-		var a00 = this._low
-		var b16 = other._high
-		var b00 = other._low
-
-/* Removed to increase speed under normal circumstances (i.e. not multiplying by 0 or 1)
-		// this == 0 or other == 1: nothing to do
-		if ((a00 == 0 && a16 == 0) || (b00 == 1 && b16 == 0)) return this
-
-		// other == 0 or this == 1: this = other
-		if ((b00 == 0 && b16 == 0) || (a00 == 1 && a16 == 0)) {
-			this._low = other._low
-			this._high = other._high
-			return this
-		}
-*/
-
-		var c16, c00
-		c00 = a00 * b00
-		c16 = c00 >>> 16
-
-		c16 += a16 * b00
-		c16 &= 0xFFFF		// Not required but improves performance
-		c16 += a00 * b16
-
-		this._low = c00 & 0xFFFF
-		this._high = c16 & 0xFFFF
-
-		return this
-	}
-
-	/**
-	 * Divide two _UINT32_. The current _UINT32_ stores the result.
-	 * The remainder is made available as the _remainder_ property on
-	 * the _UINT32_ object. It can be null, meaning there are no remainder.
-	 * @method div
-	 * @param {Object} other UINT32
-	 * @return ThisExpression
-	 */
-	UINT32.prototype.div = function (other) {
-		if ( (other._low == 0) && (other._high == 0) ) throw Error('division by zero')
-
-		// other == 1
-		if (other._high == 0 && other._low == 1) {
-			this.remainder = new UINT32(0)
-			return this
-		}
-
-		// other > this: 0
-		if ( other.gt(this) ) {
-			this.remainder = this.clone()
-			this._low = 0
-			this._high = 0
-			return this
-		}
-		// other == this: 1
-		if ( this.eq(other) ) {
-			this.remainder = new UINT32(0)
-			this._low = 1
-			this._high = 0
-			return this
-		}
-
-		// Shift the divisor left until it is higher than the dividend
-		var _other = other.clone()
-		var i = -1
-		while ( !this.lt(_other) ) {
-			// High bit can overflow the default 16bits
-			// Its ok since we right shift after this loop
-			// The overflown bit must be kept though
-			_other.shiftLeft(1, true)
-			i++
-		}
-
-		// Set the remainder
-		this.remainder = this.clone()
-		// Initialize the current result to 0
-		this._low = 0
-		this._high = 0
-		for (; i >= 0; i--) {
-			_other.shiftRight(1)
-			// If shifted divisor is smaller than the dividend
-			// then subtract it from the dividend
-			if ( !this.remainder.lt(_other) ) {
-				this.remainder.subtract(_other)
-				// Update the current result
-				if (i >= 16) {
-					this._high |= 1 << (i - 16)
-				} else {
-					this._low |= 1 << i
-				}
-			}
-		}
-
-		return this
-	}
-
-	/**
-	 * Negate the current _UINT32_
-	 * @method negate
-	 * @return ThisExpression
-	 */
-	UINT32.prototype.negate = function () {
-		var v = ( ~this._low & 0xFFFF ) + 1
-		this._low = v & 0xFFFF
-		this._high = (~this._high + (v >>> 16)) & 0xFFFF
-
-		return this
-	}
-
-	/**
-	 * Equals
-	 * @method eq
-	 * @param {Object} other UINT32
-	 * @return {Boolean}
-	 */
-	UINT32.prototype.equals = UINT32.prototype.eq = function (other) {
-		return (this._low == other._low) && (this._high == other._high)
-	}
-
-	/**
-	 * Greater than (strict)
-	 * @method gt
-	 * @param {Object} other UINT32
-	 * @return {Boolean}
-	 */
-	UINT32.prototype.greaterThan = UINT32.prototype.gt = function (other) {
-		if (this._high > other._high) return true
-		if (this._high < other._high) return false
-		return this._low > other._low
-	}
-
-	/**
-	 * Less than (strict)
-	 * @method lt
-	 * @param {Object} other UINT32
-	 * @return {Boolean}
-	 */
-	UINT32.prototype.lessThan = UINT32.prototype.lt = function (other) {
-		if (this._high < other._high) return true
-		if (this._high > other._high) return false
-		return this._low < other._low
-	}
-
-	/**
-	 * Bitwise OR
-	 * @method or
-	 * @param {Object} other UINT32
-	 * @return ThisExpression
-	 */
-	UINT32.prototype.or = function (other) {
-		this._low |= other._low
-		this._high |= other._high
-
-		return this
-	}
-
-	/**
-	 * Bitwise AND
-	 * @method and
-	 * @param {Object} other UINT32
-	 * @return ThisExpression
-	 */
-	UINT32.prototype.and = function (other) {
-		this._low &= other._low
-		this._high &= other._high
-
-		return this
-	}
-
-	/**
-	 * Bitwise NOT
-	 * @method not
-	 * @return ThisExpression
-	 */
-	UINT32.prototype.not = function() {
-		this._low = ~this._low & 0xFFFF
-		this._high = ~this._high & 0xFFFF
-
-		return this
-	}
-
-	/**
-	 * Bitwise XOR
-	 * @method xor
-	 * @param {Object} other UINT32
-	 * @return ThisExpression
-	 */
-	UINT32.prototype.xor = function (other) {
-		this._low ^= other._low
-		this._high ^= other._high
-
-		return this
-	}
-
-	/**
-	 * Bitwise shift right
-	 * @method shiftRight
-	 * @param {Number} number of bits to shift
-	 * @return ThisExpression
-	 */
-	UINT32.prototype.shiftRight = UINT32.prototype.shiftr = function (n) {
-		if (n > 16) {
-			this._low = this._high >> (n - 16)
-			this._high = 0
-		} else if (n == 16) {
-			this._low = this._high
-			this._high = 0
-		} else {
-			this._low = (this._low >> n) | ( (this._high << (16-n)) & 0xFFFF )
-			this._high >>= n
-		}
-
-		return this
-	}
-
-	/**
-	 * Bitwise shift left
-	 * @method shiftLeft
-	 * @param {Number} number of bits to shift
-	 * @param {Boolean} allow overflow
-	 * @return ThisExpression
-	 */
-	UINT32.prototype.shiftLeft = UINT32.prototype.shiftl = function (n, allowOverflow) {
-		if (n > 16) {
-			this._high = this._low << (n - 16)
-			this._low = 0
-			if (!allowOverflow) {
-				this._high &= 0xFFFF
-			}
-		} else if (n == 16) {
-			this._high = this._low
-			this._low = 0
-		} else {
-			this._high = (this._high << n) | (this._low >> (16-n))
-			this._low = (this._low << n) & 0xFFFF
-			if (!allowOverflow) {
-				// Overflow only allowed on the high bits...
-				this._high &= 0xFFFF
-			}
-		}
-
-		return this
-	}
-
-	/**
-	 * Bitwise rotate left
-	 * @method rotl
-	 * @param {Number} number of bits to rotate
-	 * @return ThisExpression
-	 */
-	UINT32.prototype.rotateLeft = UINT32.prototype.rotl = function (n) {
-		var v = (this._high << 16) | this._low
-		v = (v << n) | (v >>> (32 - n))
-		this._low = v & 0xFFFF
-		this._high = v >>> 16
-
-		return this
-	}
-
-	/**
-	 * Bitwise rotate right
-	 * @method rotr
-	 * @param {Number} number of bits to rotate
-	 * @return ThisExpression
-	 */
-	UINT32.prototype.rotateRight = UINT32.prototype.rotr = function (n) {
-		var v = (this._high << 16) | this._low
-		v = (v >>> n) | (v << (32 - n))
-		this._low = v & 0xFFFF
-		this._high = v >>> 16
-
-		return this
-	}
-
-	/**
-	 * Clone the current _UINT32_
-	 * @method clone
-	 * @return {Object} cloned UINT32
-	 */
-	UINT32.prototype.clone = function () {
-		return new UINT32(this._low, this._high)
-	}
-
-	if (typeof define != 'undefined' && define.amd) {
-		// AMD / RequireJS
-		define([], function () {
-			return UINT32
-		})
-	} else if (typeof module != 'undefined' && module.exports) {
-		// Node.js
-		module.exports = UINT32
-	} else {
-		// Browser
-		root['UINT32'] = UINT32
-	}
-
-})(this)
-
-},{}],40:[function(require,module,exports){
-/**
-	C-like unsigned 64 bits integers in Javascript
-	Copyright (C) 2013, Pierre Curto
-	MIT license
- */
-;(function (root) {
-
-	// Local cache for typical radices
-	var radixPowerCache = {
-		16: UINT64( Math.pow(16, 5) )
-	,	10: UINT64( Math.pow(10, 5) )
-	,	2:  UINT64( Math.pow(2, 5) )
-	}
-	var radixCache = {
-		16: UINT64(16)
-	,	10: UINT64(10)
-	,	2:  UINT64(2)
-	}
-
-	/**
-	 *	Represents an unsigned 64 bits integer
-	 * @constructor
-	 * @param {Number} first low bits (8)
-	 * @param {Number} second low bits (8)
-	 * @param {Number} first high bits (8)
-	 * @param {Number} second high bits (8)
-	 * or
-	 * @param {Number} low bits (32)
-	 * @param {Number} high bits (32)
-	 * or
-	 * @param {String|Number} integer as a string 		 | integer as a number
-	 * @param {Number|Undefined} radix (optional, default=10)
-	 * @return 
-	 */
-	function UINT64 (a00, a16, a32, a48) {
-		if ( !(this instanceof UINT64) )
-			return new UINT64(a00, a16, a32, a48)
-
-		this.remainder = null
-		if (typeof a00 == 'string')
-			return fromString.call(this, a00, a16)
-
-		if (typeof a16 == 'undefined')
-			return fromNumber.call(this, a00)
-
-		fromBits.apply(this, arguments)
-	}
-
-	/**
-	 * Set the current _UINT64_ object with its low and high bits
-	 * @method fromBits
-	 * @param {Number} first low bits (8)
-	 * @param {Number} second low bits (8)
-	 * @param {Number} first high bits (8)
-	 * @param {Number} second high bits (8)
-	 * or
-	 * @param {Number} low bits (32)
-	 * @param {Number} high bits (32)
-	 * @return ThisExpression
-	 */
-	function fromBits (a00, a16, a32, a48) {
-		if (typeof a32 == 'undefined') {
-			this._a00 = a00 & 0xFFFF
-			this._a16 = a00 >>> 16
-			this._a32 = a16 & 0xFFFF
-			this._a48 = a16 >>> 16
-			return this
-		}
-
-		this._a00 = a00 | 0
-		this._a16 = a16 | 0
-		this._a32 = a32 | 0
-		this._a48 = a48 | 0
-
-		return this
-	}
-	UINT64.prototype.fromBits = fromBits
-
-	/**
-	 * Set the current _UINT64_ object from a number
-	 * @method fromNumber
-	 * @param {Number} number
-	 * @return ThisExpression
-	 */
-	function fromNumber (value) {
-		this._a00 = value & 0xFFFF
-		this._a16 = value >>> 16
-		this._a32 = 0
-		this._a48 = 0
-
-		return this
-	}
-	UINT64.prototype.fromNumber = fromNumber
-
-	/**
-	 * Set the current _UINT64_ object from a string
-	 * @method fromString
-	 * @param {String} integer as a string
-	 * @param {Number} radix (optional, default=10)
-	 * @return ThisExpression
-	 */
-	function fromString (s, radix) {
-		radix = radix || 10
-
-		this._a00 = 0
-		this._a16 = 0
-		this._a32 = 0
-		this._a48 = 0
-
-		/*
-			In Javascript, bitwise operators only operate on the first 32 bits 
-			of a number, even though parseInt() encodes numbers with a 53 bits 
-			mantissa.
-			Therefore UINT64(<Number>) can only work on 32 bits.
-			The radix maximum value is 36 (as per ECMA specs) (26 letters + 10 digits)
-			maximum input value is m = 32bits as 1 = 2^32 - 1
-			So the maximum substring length n is:
-			36^(n+1) - 1 = 2^32 - 1
-			36^(n+1) = 2^32
-			(n+1)ln(36) = 32ln(2)
-			n = 32ln(2)/ln(36) - 1
-			n = 5.189644915687692
-			n = 5
-		 */
-		var radixUint = radixPowerCache[radix] || new UINT64( Math.pow(radix, 5) )
-
-		for (var i = 0, len = s.length; i < len; i += 5) {
-			var size = Math.min(5, len - i)
-			var value = parseInt( s.slice(i, i + size), radix )
-			this.multiply(
-					size < 5
-						? new UINT64( Math.pow(radix, size) )
-						: radixUint
-				)
-				.add( new UINT64(value) )
-		}
-
-		return this
-	}
-	UINT64.prototype.fromString = fromString
-
-	/**
-	 * Convert this _UINT64_ to a number (last 32 bits are dropped)
-	 * @method toNumber
-	 * @return {Number} the converted UINT64
-	 */
-	UINT64.prototype.toNumber = function () {
-		return (this._a16 * 65536) + this._a00
-	}
-
-	/**
-	 * Convert this _UINT64_ to a string
-	 * @method toString
-	 * @param {Number} radix (optional, default=10)
-	 * @return {String} the converted UINT64
-	 */
-	UINT64.prototype.toString = function (radix) {
-		radix = radix || 10
-		var radixUint = radixCache[radix] || new UINT64(radix)
-
-		if ( !this.gt(radixUint) ) return this.toNumber().toString(radix)
-
-		var self = this.clone()
-		var res = new Array(64)
-		for (var i = 63; i >= 0; i--) {
-			self.div(radixUint)
-			res[i] = self.remainder.toNumber().toString(radix)
-			if ( !self.gt(radixUint) ) break
-		}
-		res[i-1] = self.toNumber().toString(radix)
-
-		return res.join('')
-	}
-
-	/**
-	 * Add two _UINT64_. The current _UINT64_ stores the result
-	 * @method add
-	 * @param {Object} other UINT64
-	 * @return ThisExpression
-	 */
-	UINT64.prototype.add = function (other) {
-		var a00 = this._a00 + other._a00
-
-		var a16 = a00 >>> 16
-		a16 += this._a16 + other._a16
-
-		var a32 = a16 >>> 16
-		a32 += this._a32 + other._a32
-
-		var a48 = a32 >>> 16
-		a48 += this._a48 + other._a48
-
-		this._a00 = a00 & 0xFFFF
-		this._a16 = a16 & 0xFFFF
-		this._a32 = a32 & 0xFFFF
-		this._a48 = a48 & 0xFFFF
-
-		return this
-	}
-
-	/**
-	 * Subtract two _UINT64_. The current _UINT64_ stores the result
-	 * @method subtract
-	 * @param {Object} other UINT64
-	 * @return ThisExpression
-	 */
-	UINT64.prototype.subtract = function (other) {
-		return this.add( other.clone().negate() )
-	}
-
-	/**
-	 * Multiply two _UINT64_. The current _UINT64_ stores the result
-	 * @method multiply
-	 * @param {Object} other UINT64
-	 * @return ThisExpression
-	 */
-	UINT64.prototype.multiply = function (other) {
-		/*
-			a = a00 + a16 + a32 + a48
-			b = b00 + b16 + b32 + b48
-			a*b = (a00 + a16 + a32 + a48)(b00 + b16 + b32 + b48)
-				= a00b00 + a00b16 + a00b32 + a00b48
-				+ a16b00 + a16b16 + a16b32 + a16b48
-				+ a32b00 + a32b16 + a32b32 + a32b48
-				+ a48b00 + a48b16 + a48b32 + a48b48
-
-			a16b48, a32b32, a48b16, a48b32 and a48b48 overflow the 64 bits
-			so it comes down to:
-			a*b	= a00b00 + a00b16 + a00b32 + a00b48
-				+ a16b00 + a16b16 + a16b32
-				+ a32b00 + a32b16
-				+ a48b00
-				= a00b00
-				+ a00b16 + a16b00
-				+ a00b32 + a16b16 + a32b00
-				+ a00b48 + a16b32 + a32b16 + a48b00
-		 */
-		var a00 = this._a00
-		var a16 = this._a16
-		var a32 = this._a32
-		var a48 = this._a48
-		var b00 = other._a00
-		var b16 = other._a16
-		var b32 = other._a32
-		var b48 = other._a48
-
-		var c00 = a00 * b00
-
-		var c16 = c00 >>> 16
-		c16 += a00 * b16
-		var c32 = c16 >>> 16
-		c16 &= 0xFFFF
-		c16 += a16 * b00
-
-		c32 += c16 >>> 16
-		c32 += a00 * b32
-		var c48 = c32 >>> 16
-		c32 &= 0xFFFF
-		c32 += a16 * b16
-		c48 += c32 >>> 16
-		c32 &= 0xFFFF
-		c32 += a32 * b00
-
-		c48 += c32 >>> 16
-		c48 += a00 * b48
-		c48 &= 0xFFFF
-		c48 += a16 * b32
-		c48 &= 0xFFFF
-		c48 += a32 * b16
-		c48 &= 0xFFFF
-		c48 += a48 * b00
-
-		this._a00 = c00 & 0xFFFF
-		this._a16 = c16 & 0xFFFF
-		this._a32 = c32 & 0xFFFF
-		this._a48 = c48 & 0xFFFF
-
-		return this
-	}
-
-	/**
-	 * Divide two _UINT64_. The current _UINT64_ stores the result.
-	 * The remainder is made available as the _remainder_ property on
-	 * the _UINT64_ object. It can be null, meaning there are no remainder.
-	 * @method div
-	 * @param {Object} other UINT64
-	 * @return ThisExpression
-	 */
-	UINT64.prototype.div = function (other) {
-		if ( (other._a16 == 0) && (other._a32 == 0) && (other._a48 == 0) ) {
-			if (other._a00 == 0) throw Error('division by zero')
-
-			// other == 1: this
-			if (other._a00 == 1) {
-				this.remainder = new UINT64(0)
-				return this
-			}
-		}
-
-		// other > this: 0
-		if ( other.gt(this) ) {
-			this.remainder = this.clone()
-			this._a00 = 0
-			this._a16 = 0
-			this._a32 = 0
-			this._a48 = 0
-			return this
-		}
-		// other == this: 1
-		if ( this.eq(other) ) {
-			this.remainder = new UINT64(0)
-			this._a00 = 1
-			this._a16 = 0
-			this._a32 = 0
-			this._a48 = 0
-			return this
-		}
-
-		// Shift the divisor left until it is higher than the dividend
-		var _other = other.clone()
-		var i = -1
-		while ( !this.lt(_other) ) {
-			// High bit can overflow the default 16bits
-			// Its ok since we right shift after this loop
-			// The overflown bit must be kept though
-			_other.shiftLeft(1, true)
-			i++
-		}
-
-		// Set the remainder
-		this.remainder = this.clone()
-		// Initialize the current result to 0
-		this._a00 = 0
-		this._a16 = 0
-		this._a32 = 0
-		this._a48 = 0
-		for (; i >= 0; i--) {
-			_other.shiftRight(1)
-			// If shifted divisor is smaller than the dividend
-			// then subtract it from the dividend
-			if ( !this.remainder.lt(_other) ) {
-				this.remainder.subtract(_other)
-				// Update the current result
-				if (i >= 48) {
-					this._a48 |= 1 << (i - 48)
-				} else if (i >= 32) {
-					this._a32 |= 1 << (i - 32)
-				} else if (i >= 16) {
-					this._a16 |= 1 << (i - 16)
-				} else {
-					this._a00 |= 1 << i
-				}
-			}
-		}
-
-		return this
-	}
-
-	/**
-	 * Negate the current _UINT64_
-	 * @method negate
-	 * @return ThisExpression
-	 */
-	UINT64.prototype.negate = function () {
-		var v = ( ~this._a00 & 0xFFFF ) + 1
-		this._a00 = v & 0xFFFF
-		v = (~this._a16 & 0xFFFF) + (v >>> 16)
-		this._a16 = v & 0xFFFF
-		v = (~this._a32 & 0xFFFF) + (v >>> 16)
-		this._a32 = v & 0xFFFF
-		this._a48 = (~this._a48 + (v >>> 16)) & 0xFFFF
-
-		return this
-	}
-
-	/**
-
-	 * @method eq
-	 * @param {Object} other UINT64
-	 * @return {Boolean}
-	 */
-	UINT64.prototype.equals = UINT64.prototype.eq = function (other) {
-		return (this._a48 == other._a48) && (this._a00 == other._a00)
-			 && (this._a32 == other._a32) && (this._a16 == other._a16)
-	}
-
-	/**
-	 * Greater than (strict)
-	 * @method gt
-	 * @param {Object} other UINT64
-	 * @return {Boolean}
-	 */
-	UINT64.prototype.greaterThan = UINT64.prototype.gt = function (other) {
-		if (this._a48 > other._a48) return true
-		if (this._a48 < other._a48) return false
-		if (this._a32 > other._a32) return true
-		if (this._a32 < other._a32) return false
-		if (this._a16 > other._a16) return true
-		if (this._a16 < other._a16) return false
-		return this._a00 > other._a00
-	}
-
-	/**
-	 * Less than (strict)
-	 * @method lt
-	 * @param {Object} other UINT64
-	 * @return {Boolean}
-	 */
-	UINT64.prototype.lessThan = UINT64.prototype.lt = function (other) {
-		if (this._a48 < other._a48) return true
-		if (this._a48 > other._a48) return false
-		if (this._a32 < other._a32) return true
-		if (this._a32 > other._a32) return false
-		if (this._a16 < other._a16) return true
-		if (this._a16 > other._a16) return false
-		return this._a00 < other._a00
-	}
-
-	/**
-	 * Bitwise OR
-	 * @method or
-	 * @param {Object} other UINT64
-	 * @return ThisExpression
-	 */
-	UINT64.prototype.or = function (other) {
-		this._a00 |= other._a00
-		this._a16 |= other._a16
-		this._a32 |= other._a32
-		this._a48 |= other._a48
-
-		return this
-	}
-
-	/**
-	 * Bitwise AND
-	 * @method and
-	 * @param {Object} other UINT64
-	 * @return ThisExpression
-	 */
-	UINT64.prototype.and = function (other) {
-		this._a00 &= other._a00
-		this._a16 &= other._a16
-		this._a32 &= other._a32
-		this._a48 &= other._a48
-
-		return this
-	}
-
-	/**
-	 * Bitwise XOR
-	 * @method xor
-	 * @param {Object} other UINT64
-	 * @return ThisExpression
-	 */
-	UINT64.prototype.xor = function (other) {
-		this._a00 ^= other._a00
-		this._a16 ^= other._a16
-		this._a32 ^= other._a32
-		this._a48 ^= other._a48
-
-		return this
-	}
-
-	/**
-	 * Bitwise NOT
-	 * @method not
-	 * @return ThisExpression
-	 */
-	UINT64.prototype.not = function() {
-		this._a00 = ~this._a00 & 0xFFFF
-		this._a16 = ~this._a16 & 0xFFFF
-		this._a32 = ~this._a32 & 0xFFFF
-		this._a48 = ~this._a48 & 0xFFFF
-
-		return this
-	}
-
-	/**
-	 * Bitwise shift right
-	 * @method shiftRight
-	 * @param {Number} number of bits to shift
-	 * @return ThisExpression
-	 */
-	UINT64.prototype.shiftRight = UINT64.prototype.shiftr = function (n) {
-		n %= 64
-		if (n >= 48) {
-			this._a00 = this._a48 >> (n - 48)
-			this._a16 = 0
-			this._a32 = 0
-			this._a48 = 0
-		} else if (n >= 32) {
-			n -= 32
-			this._a00 = ( (this._a32 >> n) | (this._a48 << (16-n)) ) & 0xFFFF
-			this._a16 = (this._a48 >> n) & 0xFFFF
-			this._a32 = 0
-			this._a48 = 0
-		} else if (n >= 16) {
-			n -= 16
-			this._a00 = ( (this._a16 >> n) | (this._a32 << (16-n)) ) & 0xFFFF
-			this._a16 = ( (this._a32 >> n) | (this._a48 << (16-n)) ) & 0xFFFF
-			this._a32 = (this._a48 >> n) & 0xFFFF
-			this._a48 = 0
-		} else {
-			this._a00 = ( (this._a00 >> n) | (this._a16 << (16-n)) ) & 0xFFFF
-			this._a16 = ( (this._a16 >> n) | (this._a32 << (16-n)) ) & 0xFFFF
-			this._a32 = ( (this._a32 >> n) | (this._a48 << (16-n)) ) & 0xFFFF
-			this._a48 = (this._a48 >> n) & 0xFFFF
-		}
-
-		return this
-	}
-
-	/**
-	 * Bitwise shift left
-	 * @method shiftLeft
-	 * @param {Number} number of bits to shift
-	 * @param {Boolean} allow overflow
-	 * @return ThisExpression
-	 */
-	UINT64.prototype.shiftLeft = UINT64.prototype.shiftl = function (n, allowOverflow) {
-		n %= 64
-		if (n >= 48) {
-			this._a48 = this._a00 << (n - 48)
-			this._a32 = 0
-			this._a16 = 0
-			this._a00 = 0
-		} else if (n >= 32) {
-			n -= 32
-			this._a48 = (this._a16 << n) | (this._a00 >> (16-n))
-			this._a32 = (this._a00 << n) & 0xFFFF
-			this._a16 = 0
-			this._a00 = 0
-		} else if (n >= 16) {
-			n -= 16
-			this._a48 = (this._a32 << n) | (this._a16 >> (16-n))
-			this._a32 = ( (this._a16 << n) | (this._a00 >> (16-n)) ) & 0xFFFF
-			this._a16 = (this._a00 << n) & 0xFFFF
-			this._a00 = 0
-		} else {
-			this._a48 = (this._a48 << n) | (this._a32 >> (16-n))
-			this._a32 = ( (this._a32 << n) | (this._a16 >> (16-n)) ) & 0xFFFF
-			this._a16 = ( (this._a16 << n) | (this._a00 >> (16-n)) ) & 0xFFFF
-			this._a00 = (this._a00 << n) & 0xFFFF
-		}
-		if (!allowOverflow) {
-			this._a48 &= 0xFFFF
-		}
-
-		return this
-	}
-
-	/**
-	 * Bitwise rotate left
-	 * @method rotl
-	 * @param {Number} number of bits to rotate
-	 * @return ThisExpression
-	 */
-	UINT64.prototype.rotateLeft = UINT64.prototype.rotl = function (n) {
-		n %= 64
-		if (n == 0) return this
-		if (n >= 32) {
-			// A.B.C.D
-			// B.C.D.A rotl(16)
-			// C.D.A.B rotl(32)
-			var v = this._a00
-			this._a00 = this._a32
-			this._a32 = v
-			v = this._a48
-			this._a48 = this._a16
-			this._a16 = v
-			if (n == 32) return this
-			n -= 32
-		}
-
-		var high = (this._a48 << 16) | this._a32
-		var low = (this._a16 << 16) | this._a00
-
-		var _high = (high << n) | (low >>> (32 - n))
-		var _low = (low << n) | (high >>> (32 - n))
-
-		this._a00 = _low & 0xFFFF
-		this._a16 = _low >>> 16
-		this._a32 = _high & 0xFFFF
-		this._a48 = _high >>> 16
-
-		return this
-	}
-
-	/**
-	 * Bitwise rotate right
-	 * @method rotr
-	 * @param {Number} number of bits to rotate
-	 * @return ThisExpression
-	 */
-	UINT64.prototype.rotateRight = UINT64.prototype.rotr = function (n) {
-		n %= 64
-		if (n == 0) return this
-		if (n >= 32) {
-			// A.B.C.D
-			// D.A.B.C rotr(16)
-			// C.D.A.B rotr(32)
-			var v = this._a00
-			this._a00 = this._a32
-			this._a32 = v
-			v = this._a48
-			this._a48 = this._a16
-			this._a16 = v
-			if (n == 32) return this
-			n -= 32
-		}
-
-		var high = (this._a48 << 16) | this._a32
-		var low = (this._a16 << 16) | this._a00
-
-		var _high = (high >>> n) | (low << (32 - n))
-		var _low = (low >>> n) | (high << (32 - n))
-
-		this._a00 = _low & 0xFFFF
-		this._a16 = _low >>> 16
-		this._a32 = _high & 0xFFFF
-		this._a48 = _high >>> 16
-
-		return this
-	}
-
-	/**
-	 * Clone the current _UINT64_
-	 * @method clone
-	 * @return {Object} cloned UINT64
-	 */
-	UINT64.prototype.clone = function () {
-		return new UINT64(this._a00, this._a16, this._a32, this._a48)
-	}
-
-	if (typeof define != 'undefined' && define.amd) {
-		// AMD / RequireJS
-		define([], function () {
-			return UINT64
-		})
-	} else if (typeof module != 'undefined' && module.exports) {
-		// Node.js
-		module.exports = UINT64
-	} else {
-		// Browser
-		root['UINT64'] = UINT64
-	}
-
-})(this)
-
-},{}],41:[function(require,module,exports){
-(function (Buffer){
+}).call(this)}).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{"./support/isBuffer":39,"_process":19,"inherits":38}],41:[function(require,module,exports){
+(function (Buffer){(function (){
 /**
 xxHash implementation in pure Javascript
 
@@ -7178,9 +7177,9 @@ XXH.prototype.digest = function () {
 
 module.exports = XXH
 
-}).call(this,require("buffer").Buffer)
-},{"buffer":"buffer","cuint":38}],42:[function(require,module,exports){
-(function (Buffer){
+}).call(this)}).call(this,require("buffer").Buffer)
+},{"buffer":"buffer","cuint":10}],42:[function(require,module,exports){
+(function (Buffer){(function (){
 /**
 xxHash64 implementation in pure Javascript
 
@@ -7626,9 +7625,9 @@ XXH64.prototype.digest = function () {
 
 module.exports = XXH64
 
-}).call(this,require("buffer").Buffer)
-},{"buffer":"buffer","cuint":38}],"buffer":[function(require,module,exports){
-(function (Buffer){
+}).call(this)}).call(this,require("buffer").Buffer)
+},{"buffer":"buffer","cuint":10}],"buffer":[function(require,module,exports){
+(function (Buffer){(function (){
 /*!
  * The buffer module from node.js, for the browser.
  *
@@ -9407,8 +9406,8 @@ function numberIsNaN (obj) {
   return obj !== obj // eslint-disable-line no-self-compare
 }
 
-}).call(this,require("buffer").Buffer)
-},{"base64-js":1,"buffer":"buffer","ieee754":5}],"lz4":[function(require,module,exports){
+}).call(this)}).call(this,require("buffer").Buffer)
+},{"base64-js":7,"buffer":"buffer","ieee754":14}],"lz4":[function(require,module,exports){
 /**
  * LZ4 based compression and decompression
  * Copyright (c) 2014 Pierre Curto
@@ -9433,7 +9432,7 @@ module.exports.encodeBound = bindings.compressBound
 module.exports.encodeBlock = bindings.compress
 module.exports.encodeBlockHC = bindings.compressHC
 
-},{"./decoder":33,"./decoder_stream":34,"./encoder":35,"./encoder_stream":36,"./static":37}],"xxhashjs":[function(require,module,exports){
+},{"./decoder":2,"./decoder_stream":3,"./encoder":4,"./encoder_stream":5,"./static":6}],"xxhashjs":[function(require,module,exports){
 module.exports = {
 	h32: require("./xxhash")
 ,	h64: require("./xxhash64")

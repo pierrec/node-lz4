@@ -10,7 +10,7 @@
     "decompression",
     "stream"
   ],
-  "version": "0.6.3",
+  "version": "0.6.5",
   "homepage": "http://github.com/pierrec/node-lz4",
   "repository": {
     "type": "git",
@@ -41,14 +41,14 @@
     "benchmark": "^1.0.0",
     "browserify": "^16.2.3",
     "jasmine-core": "^2.2.0",
-    "karma": "^0.12.31",
+    "karma": "^5.2.3",
     "karma-chrome-launcher": "^0.1.7",
     "karma-cli": "0.0.4",
     "karma-firefox-launcher": "^0.1.4",
     "karma-jasmine": "^0.3.5",
     "karma-mocha": "^0.1.10",
     "minify": "^4.1.1",
-    "mocha": "^2.2.4"
+    "mocha": "^8.2.1"
   },
   "scripts": {
     "test": "mocha",
