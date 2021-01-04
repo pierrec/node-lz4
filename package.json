@@ -2,6 +2,7 @@
   "author": {
     "name": "Pierre Curto"
   },
+  "license": "MIT",
   "name": "lz4",
   "description": "LZ4 streaming compression and decompression",
   "keywords": [
