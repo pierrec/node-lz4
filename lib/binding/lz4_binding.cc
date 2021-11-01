@@ -14,7 +14,7 @@ Napi::Value LZ4Compress(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
 
   uint32_t alen = info.Length();
-  if (alen < 2 && alen > 4) {
+  if (alen < 2 || alen > 4) {
     Napi::Error::New(env, "Wrong number of arguments").ThrowAsJavaScriptException();
     return env.Null();
   }
@@ -282,7 +282,7 @@ Napi::Value LZ4Uncompress(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
 
   uint32_t alen = info.Length();
-  if (alen < 2 && alen > 4) {
+  if (alen < 2 || alen > 4) {
     Napi::Error::New(env, "Wrong number of arguments").ThrowAsJavaScriptException();
     return env.Null();
   }
