@@ -1,15 +1,8 @@
-#include <string.h>
-#include <stdlib.h>
-
-#include <node.h>
-#include <node_buffer.h>
-#include <nan.h>
+#define NAPI_VERSION 3
+#include <napi.h>
 
 #include "../../deps/lz4/lib/lz4.h"
 #include "../../deps/lz4/lib/lz4hc.h"
-
-using namespace node;
-using namespace v8;
 
 //-----------------------------------------------------------------------------
 // LZ4 Compress
@@ -17,374 +10,373 @@ using namespace v8;
 // Simple functions
 
 // {Buffer} input, {Buffer} output
-NAN_METHOD(LZ4Compress) {
-  Nan::HandleScope scope;
+Napi::Value LZ4Compress(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
   uint32_t alen = info.Length();
-  if (alen < 2 && alen > 4) {
-    Nan::ThrowError("Wrong number of arguments");
-    return;
+  if (alen < 2 || alen > 4) {
+    Napi::Error::New(env, "Wrong number of arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  if (!Buffer::HasInstance(info[0]) || !Buffer::HasInstance(info[1])) {
-    Nan::ThrowTypeError("Wrong arguments");
-    return;
+  if (!info[0].IsBuffer() || !info[1].IsBuffer()) {
+    Napi::TypeError::New(env, "Wrong arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
-  Local<Object> input = Local<Object>::Cast(info[0]);
-  Local<Object> output = Local<Object>::Cast(info[1]);
+  Napi::Buffer<char> input = info[0].As<Napi::Buffer<char>>();
+  Napi::Buffer<char> output = info[1].As<Napi::Buffer<char>>();
 
-  Local<Integer> result;
+  Napi::Number result;
   uint32_t sIdx = 0;
-  uint32_t eIdx = Buffer::Length(output);
+  uint32_t eIdx = output.Length();
   switch (alen) {
   case 4:
-    if (!info[3]->IsUint32()) {
-      Nan::ThrowTypeError("Invalid endIdx");
-      return;
+    if (!info[3].IsNumber()) {
+      Napi::TypeError::New(env, "Invalid endIdx").ThrowAsJavaScriptException();
+      return env.Null();
     }
-    eIdx = info[3]->Uint32Value(Nan::GetCurrentContext()).FromJust();
+    eIdx = info[3].As<Napi::Number>().Uint32Value();
     // fall through
+    [[fallthrough]];
   case 3:
-    if (!info[2]->IsUint32()) {
-      Nan::ThrowTypeError("Invalid startIdx");
-      return;
+    if (!info[2].IsNumber()) {
+      Napi::TypeError::New(env, "Invalid startIdx").ThrowAsJavaScriptException();
+      return env.Null();
     }
-    sIdx = info[2]->Uint32Value(Nan::GetCurrentContext()).FromJust();
+    sIdx = info[2].As<Napi::Number>().Uint32Value();
     // fall through
+    [[fallthrough]];
   case 2:
-    result = Nan::New<Integer>(LZ4_compress_default(Buffer::Data(input),
-                                                        Buffer::Data(output) + sIdx,
-                                                        Buffer::Length(input),
+    result = Napi::Number::New(env, LZ4_compress_default(input.Data(),
+                                                        output.Data() + sIdx,
+                                                        input.Length(),
                                                         eIdx - sIdx)
                             );
   }
 
-  info.GetReturnValue().Set(result);
+  return result;
 }
 
 // {Buffer} input, {Buffer} output, {Integer} compressionLevel
-NAN_METHOD(LZ4CompressHC) {
-  Nan::HandleScope scope;
+Napi::Value LZ4CompressHC(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
   uint32_t alen = info.Length();
   if (alen != 2 && alen != 3) {
-    Nan::ThrowError("Wrong number of arguments");
-    return;
+    Napi::Error::New(env, "Wrong number of arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  if (!Buffer::HasInstance(info[0]) || !Buffer::HasInstance(info[1])) {
-    Nan::ThrowTypeError("Wrong arguments");
-    return;
+  if (!info[0].IsBuffer() || !info[1].IsBuffer()) {
+    Napi::TypeError::New(env, "Wrong arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  Local<Object> input = Local<Object>::Cast(info[0]);
-  Local<Object> output = Local<Object>::Cast(info[1]);
-  uint32_t compressionLevel = info[3]->IsUint32() ? info[3]->Uint32Value(Nan::GetCurrentContext()).FromJust() : 9;
+  Napi::Buffer<char> input = info[0].As<Napi::Buffer<char>>();
+  Napi::Buffer<char> output = info[1].As<Napi::Buffer<char>>();
+  uint32_t compressionLevel = info[3].IsNumber() ? info[3].As<Napi::Number>().Uint32Value() : 9;
 
-  Local<Integer> result = Nan::New<Integer>(LZ4_compress_HC(Buffer::Data(input),
-                                                         Buffer::Data(output),
-                                                         Buffer::Length(input),
-                                                         Buffer::Length(output),
+  Napi::Number result = Napi::Number::New(env, LZ4_compress_HC(input.Data(),
+                                                         output.Data(),
+                                                         input.Length(),
+                                                         output.Length(),
                                                          compressionLevel)
                                          );
-  info.GetReturnValue().Set(result);
+  return result;
 }
 
 // Advanced functions
 
 // {Integer} Buffer size
-NAN_METHOD(LZ4CompressBound) {
-  Nan::HandleScope scope;
+Napi::Value LZ4CompressBound(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
   if (info.Length() != 1) {
-    Nan::ThrowError("Wrong number of arguments");
-    return;
+    Napi::Error::New(env, "Wrong number of arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  if (!info[0]->IsUint32()) {
-    Nan::ThrowTypeError("Wrong arguments");
-    return;
+  if (!info[0].IsNumber()) {
+    Napi::TypeError::New(env, "Wrong arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  uint32_t size = info[0]->Uint32Value(Nan::GetCurrentContext()).FromJust();
+  uint32_t size = info[0].As<Napi::Number>().Uint32Value();
 
-  info.GetReturnValue().Set(
-    Nan::New<Integer>(LZ4_compressBound(size))
-  );
+  return Napi::Number::New(env, LZ4_compressBound(size));
 }
 
 // {Buffer} input, {Buffer} output, {Integer} maxOutputSize
-NAN_METHOD(LZ4CompressLimited) {
-  Nan::HandleScope scope;
+Napi::Value LZ4CompressLimited(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
   if (info.Length() != 3) {
-    Nan::ThrowError("Wrong number of arguments");
-    return;
+    Napi::Error::New(env, "Wrong number of arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  if (!Buffer::HasInstance(info[0]) || !Buffer::HasInstance(info[1])) {
-    Nan::ThrowTypeError("Wrong arguments");
-    return;
+  if (!info[0].IsBuffer() || !info[1].IsBuffer()) {
+    Napi::TypeError::New(env, "Wrong arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  if (!info[2]->IsUint32()) {
-    Nan::ThrowTypeError("Wrong arguments");
-    return;
+  if (!info[2].IsNumber()) {
+    Napi::TypeError::New(env, "Wrong arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  Local<Object> input = Local<Object>::Cast(info[0]);
-  Local<Object> output = Local<Object>::Cast(info[1]);
-  uint32_t size = info[2]->Uint32Value(Nan::GetCurrentContext()).FromJust();
+  Napi::Buffer<char> input = info[0].As<Napi::Buffer<char>>();
+  Napi::Buffer<char> output = info[1].As<Napi::Buffer<char>>();
+  uint32_t size = info[2].As<Napi::Number>().Uint32Value();
 
-  Local<Integer> result = Nan::New<Integer>(LZ4_compress_default(Buffer::Data(input),
-                                                                     Buffer::Data(output),
-                                                                     Buffer::Length(input),
+  Napi::Number result = Napi::Number::New(env, LZ4_compress_default(input.Data(),
+                                                                     output.Data(),
+                                                                     input.Length(),
                                                                      size)
                                          );
-  info.GetReturnValue().Set(result);
+  return result;
 }
 
 // {Buffer} input, {Buffer} output, {Integer} maxOutputSize, {Integer} compressionLevel
-NAN_METHOD(LZ4CompressHCLimited) {
-  Nan::HandleScope scope;
+Napi::Value LZ4CompressHCLimited(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
   uint32_t alen = info.Length();
   if (alen != 3 && alen != 4) {
-    Nan::ThrowError("Wrong number of arguments");
-    return;
+    Napi::Error::New(env, "Wrong number of arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  if (!Buffer::HasInstance(info[0]) || !Buffer::HasInstance(info[1])) {
-    Nan::ThrowTypeError("Wrong arguments");
-    return;
+  if (!info[0].IsBuffer() || !info[1].IsBuffer()) {
+    Napi::TypeError::New(env, "Wrong arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  if (!info[2]->IsUint32()) {
-    Nan::ThrowTypeError("Wrong arguments");
-    return;
+  if (!info[2].IsNumber()) {
+    Napi::TypeError::New(env, "Wrong arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  Local<Object> input = Local<Object>::Cast(info[0]);
-  Local<Object> output = Local<Object>::Cast(info[1]);
-  uint32_t size = info[2]->Uint32Value(Nan::GetCurrentContext()).FromJust();
-  uint32_t compressionLevel = info[3]->IsUint32() ? info[3]->Uint32Value(Nan::GetCurrentContext()).FromJust() : 9;
+  Napi::Buffer<char> input = info[0].As<Napi::Buffer<char>>();
+  Napi::Buffer<char> output = info[1].As<Napi::Buffer<char>>();
+  uint32_t size = info[2].As<Napi::Number>().Uint32Value();
+  uint32_t compressionLevel = info[3].IsNumber() ? info[3].As<Napi::Number>().Uint32Value() : 9;
 
-  Local<Integer> result = Nan::New<Integer>(LZ4_compress_HC(Buffer::Data(input),
-                                                                       Buffer::Data(output),
-                                                                       Buffer::Length(input),
+  Napi::Number result = Napi::Number::New(env, LZ4_compress_HC(input.Data(),
+                                                                       output.Data(),
+                                                                       input.Length(),
                                                                        size,
                                                                        compressionLevel)
                                          );
-  info.GetReturnValue().Set(result);
+  return result;
 }
 
-void null_cb(char* data, void* hint) {
-  
-}
 /*
 //-----------------------------------------------------------------------------
 // LZ4 Stream
 //-----------------------------------------------------------------------------
 // {Buffer} input
-NAN_METHOD(LZ4Stream_create) {
-  Nan::HandleScope scope;
+Napi::Value LZ4Stream_create(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
   if (info.Length() != 1) {
-    Nan::ThrowError("Wrong number of arguments");
-    return;
+    Napi::Error::New(env, "Wrong number of arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  if (!Buffer::HasInstance(info[0])) {
-    Nan::ThrowTypeError("Wrong arguments");
-    return;
+  if (!info[0].IsBuffer()) {
+    Napi::TypeError::New(env, "Wrong arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  Local<Object> input = Local<Object>::Cast(info[0]);
+  Napi::Buffer<char> input = info[0].As<Napi::Buffer<char>>();
 
-  void* p = LZ4_create( Buffer::Data(input) );
+  void* p = LZ4_create(input.Data());
 
   if (p == NULL) {
-    return;
+    return env.Null();
   }
 
-  Nan::MaybeLocal<Object> handle = Nan::NewBuffer((char *)p, LZ4_sizeofStreamState(), null_cb, NULL);
+  Napi::Buffer<char> handle = Napi::Buffer<char>::New(env, (char *)p, LZ4_sizeofStreamState());
 
-  info.GetReturnValue().Set(handle.ToLocalChecked());
+  return handle;
 }
 
 // {Buffer} lz4 data struct, {Buffer} input, {Buffer} output
-NAN_METHOD(LZ4Stream_compress_continue) {
-  Nan::HandleScope scope;
+Napi::Value LZ4Stream_compress_continue(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
   if (info.Length() != 3) {
-    Nan::ThrowError("Wrong number of arguments");
-    return;
+    Napi::Error::New(env, "Wrong number of arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  if (!Buffer::HasInstance(info[0]) || !Buffer::HasInstance(info[1]) || !Buffer::HasInstance(info[2])) {
-    Nan::ThrowTypeError("Wrong arguments");
-    return;
+  if (!info[0].IsBuffer() || !info[1].IsBuffer() || !info[2].IsBuffer()) {
+    Napi::TypeError::New(env, "Wrong arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  Local<Object> lz4ds = Local<Object>::Cast(info[0]);
-  Local<Object> input = Local<Object>::Cast(info[1]);
-  Local<Object> output = Local<Object>::Cast(info[2]);
+  Napi::Buffer<char> lz4ds = info[0].As<Napi::Buffer<char>>();
+  Napi::Buffer<char> input = info[1].As<Napi::Buffer<char>>();
+  Napi::Buffer<char> output = info[2].As<Napi::Buffer<char>>();
 
-  Local<Integer> result = Nan::New<Integer>(LZ4_compress_continue(
-                                            (LZ4_stream_t*)Buffer::Data(lz4ds),
-                                            Buffer::Data(input),
-                                            Buffer::Data(output),
-                                            Buffer::Length(input))
+  Napi::Number result = Napi::Number::New(env, LZ4_compress_continue(
+                                            (LZ4_stream_t*)lz4ds.Data(),
+                                            input.Data(),
+                                            output.Data(),
+                                            input.Length())
                                          );
-  info.GetReturnValue().Set(result);
+  return result;
 }
 
 // {Buffer} input, {Buffer} lz4 data struct
-NAN_METHOD(LZ4Stream_slideInputBuffer) {
-  Nan::HandleScope scope;
+Napi::Value LZ4Stream_slideInputBuffer(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
   if (info.Length() != 2) {
-    Nan::ThrowError("Wrong number of arguments");
-    return;
+    Napi::Error::New(env, "Wrong number of arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  if (!Buffer::HasInstance(info[0]) || !Buffer::HasInstance(info[1])) {
-    Nan::ThrowTypeError("Wrong arguments");
-    return;
+  if (!info[0].IsBuffer() || !info[1].IsBuffer()) {
+    Napi::TypeError::New(env, "Wrong arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  Local<Object> lz4ds = Local<Object>::Cast(info[0]);
-  Local<Object> input = Local<Object>::Cast(info[1]);
+  Napi::Buffer<char> lz4ds = info[0].As<Napi::Buffer<char>>();
+  Napi::Buffer<char> input = info[1].As<Napi::Buffer<char>>();
 
   // Pointer to the position into the input buffer where the next data block should go
-  char* input_next_block = LZ4_slideInputBuffer(Buffer::Data(lz4ds));
-  char* input_current = (char *)Buffer::Data(input);
+  char* input_next_block = LZ4_slideInputBuffer(lz4ds.Data());
+  char* input_current = (char *)input.Data();
 
   // Return the position of the next block
-  info.GetReturnValue().Set(Nan::New<Integer>((int)(input_next_block - input_current)));
+  return Napi::Number::New(env, (int)(input_next_block - input_current));
 }
 
 // {Buffer} lz4 data struct
-NAN_METHOD(LZ4Stream_free) {
-  Nan::HandleScope scope;
+Napi::Value LZ4Stream_free(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
   if (info.Length() != 1) {
-    Nan::ThrowError("Wrong number of arguments");
-    return;
+    Napi::Error::New(env, "Wrong number of arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  if (!Buffer::HasInstance(info[0])) {
-    Nan::ThrowTypeError("Wrong arguments");
-    return;
+  if (!info[0].IsBuffer()) {
+    Napi::TypeError::New(env, "Wrong arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  Local<Object> lz4ds = Local<Object>::Cast(info[0]);
-  int res = LZ4_freeStream( (LZ4_stream_t*) Buffer::Data(lz4ds) );
+  Napi::Buffer<char> lz4ds = info[0].As<Napi::Buffer<char>>();
+  int res = LZ4_freeStream( (LZ4_stream_t*) lz4ds .Data());
 
-  info.GetReturnValue().Set(Nan::New<Integer>(res));
+  return Napi::Number::New(env, res);
 }
 */
 //-----------------------------------------------------------------------------
 // LZ4 Uncompress
 //-----------------------------------------------------------------------------
 // {Buffer} input, {Buffer} output
-NAN_METHOD(LZ4Uncompress) {
-  Nan::HandleScope scope;
+Napi::Value LZ4Uncompress(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
   uint32_t alen = info.Length();
-  if (alen < 2 && alen > 4) {
-    Nan::ThrowError("Wrong number of arguments");
-    return;
+  if (alen < 2 || alen > 4) {
+    Napi::Error::New(env, "Wrong number of arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  if (!Buffer::HasInstance(info[0]) || !Buffer::HasInstance(info[1])) {
-    Nan::ThrowTypeError("Wrong arguments");
-    return;
+  if (!info[0].IsBuffer() || !info[1].IsBuffer()) {
+    Napi::TypeError::New(env, "Wrong arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
-  Local<Object> input = Local<Object>::Cast(info[0]);
-  Local<Object> output = Local<Object>::Cast(info[1]);
+  Napi::Buffer<char> input = info[0].As<Napi::Buffer<char>>();
+  Napi::Buffer<char> output = info[1].As<Napi::Buffer<char>>();
 
-  Local<Integer> result;
+  Napi::Number result;
   uint32_t sIdx = 0;
-  uint32_t eIdx = Buffer::Length(input);
+  uint32_t eIdx = input.Length();
   switch (alen) {
   case 4:
-    if (!info[3]->IsUint32()) {
-      Nan::ThrowTypeError("Invalid endIdx");
-      return;
+    if (!info[3].IsNumber()) {
+      Napi::TypeError::New(env, "Invalid endIdx").ThrowAsJavaScriptException();
+      return env.Null();
     }
-    if (!info[2]->IsUint32()) {
-      Nan::ThrowTypeError("Invalid startIdx");
-      return;
+    if (!info[2].IsNumber()) {
+      Napi::TypeError::New(env, "Invalid startIdx").ThrowAsJavaScriptException();
+      return env.Null();
     }
-    sIdx = info[2]->Uint32Value(Nan::GetCurrentContext()).FromJust();
-    eIdx = info[3]->Uint32Value(Nan::GetCurrentContext()).FromJust();
-    result = Nan::New<Integer>(LZ4_decompress_safe(Buffer::Data(input) + sIdx,
-                                                 Buffer::Data(output),
+    sIdx = info[2].As<Napi::Number>().Uint32Value();
+    eIdx = info[3].As<Napi::Number>().Uint32Value();
+    result = Napi::Number::New(env, LZ4_decompress_safe(input.Data() + sIdx,
+                                                        output.Data(),
                                                  eIdx - sIdx,
-                                                 Buffer::Length(output))
+                                                        output.Length())
                             );
     break;
   case 3:
-    if (!info[2]->IsInt32()) {
-      Nan::ThrowTypeError("Invalid startIdx");
-      return;
+    if (!info[2].IsNumber()) {
+      Napi::TypeError::New(env, "Invalid startIdx").ThrowAsJavaScriptException();
+      return env.Null();
     }
-    sIdx = info[2]->Uint32Value(Nan::GetCurrentContext()).FromJust();
+    sIdx = info[2].As<Napi::Number>().Uint32Value();
+    [[fallthrough]];
   case 2:
-    result = Nan::New<Integer>(LZ4_decompress_safe(Buffer::Data(input) + sIdx,
-                                                 Buffer::Data(output),
+    result = Napi::Number::New(env, LZ4_decompress_safe(input.Data() + sIdx,
+                                                 output.Data(),
                                                  eIdx - sIdx,
-                                                 Buffer::Length(output))
+                                                 output.Length())
                             );
   }
 
-  info.GetReturnValue().Set(result);
+  return result;
 }
 
 // {Buffer} input, {Buffer} output
-NAN_METHOD(LZ4Uncompress_fast) {
-  Nan::HandleScope scope;
+Napi::Value LZ4Uncompress_fast(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
   if (info.Length() != 2) {
-    Nan::ThrowError("Wrong number of arguments");
-    return;
+    Napi::Error::New(env, "Wrong number of arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  if (!Buffer::HasInstance(info[0]) || !Buffer::HasInstance(info[1])) {
-    Nan::ThrowTypeError("Wrong arguments");
-    return;
+  if (!info[0].IsBuffer() || !info[1].IsBuffer()) {
+    Napi::TypeError::New(env, "Wrong arguments").ThrowAsJavaScriptException();
+    return env.Null();
   }
 
-  Local<Object> input = Local<Object>::Cast(info[0]);
-  Local<Object> output = Local<Object>::Cast(info[1]);
+  Napi::Buffer<char> input = info[0].As<Napi::Buffer<char>>();
+  Napi::Buffer<char> output = info[1].As<Napi::Buffer<char>>();
 
-  Local<Integer> result = Nan::New<Integer>(LZ4_decompress_fast(Buffer::Data(input),
-                                                              Buffer::Data(output),
-                                                              Buffer::Length(output))
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  Napi::Number result = Napi::Number::New(env, LZ4_decompress_fast(input.Data(),
+                                                              output.Data(),
+                                                              output.Length())
                                          );
-  info.GetReturnValue().Set(result);
+#pragma GCC diagnostic pop
+  return result;
 }
 
-NAN_MODULE_INIT(init_lz4) {
-  Nan::Export(target, "compressBound", LZ4CompressBound);
-  Nan::Export(target, "compress", LZ4Compress);
-  Nan::Export(target, "compressLimited", LZ4CompressLimited);
 
-  // Nan::Export(target, "lz4s_create", LZ4Stream_create);
-  // Nan::Export(target, "lz4s_compress_continue", LZ4Stream_compress_continue);
-  // Nan::Export(target, "lz4s_slide_input", LZ4Stream_slideInputBuffer);
-  // Nan::Export(target, "lz4s_free", LZ4Stream_free);
+Napi::Object init_lz4(Napi::Env env, Napi::Object exports) {
+  exports.Set(Napi::String::New(env, "compressBound"), Napi::Function::New(env, LZ4CompressBound));
+  exports.Set(Napi::String::New(env, "compress"), Napi::Function::New(env, LZ4Compress));
+  exports.Set(Napi::String::New(env, "compressLimited"), Napi::Function::New(env, LZ4CompressLimited));
 
-  Nan::Export(target, "compressHC", LZ4CompressHC);
-  Nan::Export(target, "compressHCLimited", LZ4CompressHCLimited);
+  // exports.Set(Napi::String::New(env, "lz4s_create"), Napi::Function::New(env, LZ4Stream_create));
+  // exports.Set(Napi::String::New(env, "lz4s_compress_continue"), Napi::Function::New(env, LZ4Stream_compress_continue));
+  // exports.Set(Napi::String::New(env, "lz4s_slide_input"), Napi::Function::New(env, LZ4Stream_slideInputBuffer));
+  // exports.Set(Napi::String::New(env, "lz4s_free"), Napi::Function::New(env, LZ4Stream_free));
 
-  Nan::Export(target, "uncompress", LZ4Uncompress);
-  Nan::Export(target, "uncompress_fast", LZ4Uncompress_fast);
+  exports.Set(Napi::String::New(env, "compressHC"), Napi::Function::New(env, LZ4CompressHC));
+  exports.Set(Napi::String::New(env, "compressHCLimited"), Napi::Function::New(env, LZ4CompressHCLimited));
+
+  exports.Set(Napi::String::New(env, "uncompress"), Napi::Function::New(env, LZ4Uncompress));
+  exports.Set(Napi::String::New(env, "uncompress_fast"), Napi::Function::New(env, LZ4Uncompress_fast));
+
+  return exports;
 }
-
-#if (NODE_MAJOR_VERSION >= 10 && NODE_MINOR_VERSION >= 7) || NODE_MAJOR_VERSION >= 11
-  NAN_MODULE_WORKER_ENABLED(lz4, init_lz4)
-#else
-  NODE_MODULE(lz4, init_lz4)
-#endif
+NODE_API_MODULE(lz4_binding, init_lz4);
