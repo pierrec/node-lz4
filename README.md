@@ -201,9 +201,10 @@ In some cases, it is useful to be able to manipulate an LZ4 block instead of an 
 	* `output` (_Buffer_): encoded data block
 	* `startIdx` (_Number_): output buffer start index (optional, default=0)
 	* `endIdx` (_Number_): output buffer end index (optional, default=startIdx + output.length)
-* `LZ4#encodeBlockHC(input, output)` (_Number_) >0: compressed size, =0: not compressible
+* `LZ4#encodeBlockHC(input, output[, compressionLevel])` (_Number_) >0: compressed size, =0: not compressible
 	* `input` (_Buffer_): data block to encode with high compression
 	* `output` (_Buffer_): encoded data block
+	* `compressionLevel` (_Number_): compression level between 3 and 12 (optional, default=9)
 
 
 Blocks do not have any magic number and are provided as is. It is useful to store somewhere the size of the original input for decoding.
