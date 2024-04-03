@@ -45,6 +45,15 @@ describe('LZ4 encoder', function () {
       })
     })
 
+    describe('encoding with streamSize', function () {
+      it("should encode datag", function (done) {
+        var encoded = lz4.encode(decoded_data, { streamSize: true })
+
+        assert( compare(lz4.decode(encoded), decoded_data) )
+        done()
+      })
+    })
+
     // https://github.com/pierrec/node-lz4/issues/69
     describe('HC block compression', function () {
       it('decoded should match with original', function (done) {
