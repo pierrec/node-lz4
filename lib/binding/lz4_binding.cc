@@ -74,7 +74,7 @@ Napi::Value LZ4CompressHC(const Napi::CallbackInfo& info) {
 
   Napi::Buffer<char> input = info[0].As<Napi::Buffer<char>>();
   Napi::Buffer<char> output = info[1].As<Napi::Buffer<char>>();
-  uint32_t compressionLevel = info[2].IsNumber() ? info[2].As<Napi::Number>().Uint32Value() : 9;
+  uint32_t compressionLevel = info[3].IsNumber() ? info[3].As<Napi::Number>().Uint32Value() : 9;
 
   Napi::Number result = Napi::Number::New(env, LZ4_compress_HC(input.Data(),
                                                          output.Data(),
