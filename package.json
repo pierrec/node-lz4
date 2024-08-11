@@ -53,6 +53,6 @@
   "scripts": {
     "test": "mocha",
     "install": "node-gyp rebuild",
-    "prepublish": "./build.sh"
+    "prepublish": "sh build.sh"
   }
 }
